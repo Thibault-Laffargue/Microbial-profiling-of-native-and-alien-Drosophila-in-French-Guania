@@ -28,7 +28,7 @@ install.packages("stringr")
 install.packages("readxl")
 install.packages("writexl")
 
-########################################## Chargement des librairy ###################################################
+########################################## Loading libraries ###################################################
 
 library(httr)
 library(rentrez)
@@ -45,17 +45,17 @@ library(writexl)
 #############################################################################################################
 
 #### Checking results ####
-Blast_result_brute <- readr::read_csv("blast_results.csv") #importation des résultats
-View(Blast_result_brute) #Visualisation 
+Blast_result_brute <- readr::read_csv("blast_results.csv") #results importation
+View(Blast_result_brute) #Visualization 
 
-Number_of_samples <- unique(Blast_result_brute$qseqid) #Permet de vérifier que tous les échantillons ont été blasté
+Number_of_samples <- unique(Blast_result_brute$qseqid) #Verify that sample are well blasted
 Number_of_samples
 
 #### Clean columns ####
 
-Blast_result_brute$Species <- sub("^.*?((Drosophila|Scaptomyza|Scaptodrosophila|Zaprionus)\\s+\\w+).*", "\\1", Blast_result_brute$stitle)#On ne garde que le nom d'espèce
+Blast_result_brute$Species <- sub("^.*?((Drosophila|Scaptomyza|Scaptodrosophila|Zaprionus)\\s+\\w+).*", "\\1", Blast_result_brute$stitle)# keep only species names
 
-colnames(Blast_result_brute)[colnames(Blast_result_brute) == "qseqid"] <- "Sample_ID" #renommée les colonnes
+colnames(Blast_result_brute)[colnames(Blast_result_brute) == "qseqid"] <- "Sample_ID" #rename col
 colnames(Blast_result_brute)[colnames(Blast_result_brute) == "sseqid"] <- "HitID"
 colnames(Blast_result_brute)[colnames(Blast_result_brute) == "pident"] <- "Percentage_Identity"
 colnames(Blast_result_brute)[colnames(Blast_result_brute) == "qcovs"] <- "Query_Cover"
@@ -68,93 +68,93 @@ View(Blast_result_brute)
 
 write_xlsx(Blast_result_brute, "Blast_result_brute.xlsx")
 
-#### Filtrer les résultats ####
+#### filter results ####
 
-# Créer une liste pour stocker les résultats intermédiaires (espèce/échantillon)
+# create list to store intermediate results (species/samples)
 filtered_results_species <- list()
 
-# Boucles sur les valeurs uniques de Sample_ID et Species
+# unique value treatment
 for (sample in unique(Blast_result_brute$Sample_ID)) {
   for (species in unique(Blast_result_brute$Species)) {
     
-    # Sélection des lignes correspondant au sample et à l'espèce
+    # select line corresponding to species and sample
     subset_data <- Blast_result_brute[Blast_result_brute$Sample_ID == sample & Blast_result_brute$Species == species, ]
     
-    # Vérifier si des lignes existent
+    # verify if such line exist
     if (nrow(subset_data) > 0) {
       
-      # Vérifier si au moins une ligne a Query_Cover > 90
+      # Verify if at least one line has query cover > 90
       if (any(subset_data$Query_Cover > 90)) {
-        subset_data <- subset_data[subset_data$Query_Cover > 90, ]  # Filtrer seulement celles > 90
+        subset_data <- subset_data[subset_data$Query_Cover > 90, ]  # keep only query cover > 90
       }
       
-      # Trouver la valeur maximale de Percentage_Identity
+      # find max Percentage_Identity
       max_identity <- max(subset_data$Percentage_Identity, na.rm = TRUE)
-      subset_data <- subset_data[subset_data$Percentage_Identity == max_identity, ]  # Garder celles avec le max
+      subset_data <- subset_data[subset_data$Percentage_Identity == max_identity, ]  # keep lines with max
       
-      # S'il reste plusieurs lignes, prendre celle avec Query_Cover le plus élevé
+      # if more than one line, keep highest query_cover
       if (nrow(subset_data) > 1) {
         max_cover <- max(subset_data$Query_Cover, na.rm = TRUE)
-        subset_data <- subset_data[subset_data$Query_Cover == max_cover, ]  # Garder celle avec le max Query_Cover
+        subset_data <- subset_data[subset_data$Query_Cover == max_cover, ]  # keep highest query_cover
       }
       
-      # S'il reste encore plusieurs lignes, garder une seule (par défaut la première)
+      # If more than one line stays keep only the first
       if (nrow(subset_data) > 1) {
-        subset_data <- subset_data[1, , drop = FALSE]  # Prendre la première occurrence
+        subset_data <- subset_data[1, , drop = FALSE]  # keep the first
       }
       
-      # Ajouter la ligne filtrée aux résultats intermédiaires
+      # Add filtered line to intermediate results
       filtered_results_species <- rbind(filtered_results_species, subset_data)
     }
   }
 }
 
-# Convertir en data.frame après la première étape
+# Convert to data.frame
 filtered_results_species <- as.data.frame(filtered_results_species)
 
 
-# ----------------- ÉTAPE 2 : Sélection de la meilleure ligne par échantillon -----------------
+# ----------------- STEP 2 : select best line by sample -----------------
 
-# Créer une liste pour stocker les résultats finaux (une seule ligne par échantillon)
+# list for final results (1 line by sample only)
 final_filtered_results <- list()
 
-# Boucle sur chaque échantillon unique
+# unique sample treatment
 for (sample in unique(filtered_results_species$Sample_ID)) {
   
-  # Sélectionner les lignes correspondant à cet échantillon
+  # Select corresponding line
   subset_sample <- filtered_results_species[filtered_results_species$Sample_ID == sample, ]
   
-  # Vérifier si des lignes existent
+  # Verify if line exist
   if (nrow(subset_sample) > 0) {
     
-    # Vérifier si au moins une ligne a Query_Cover > 90
+    # verify if query_cover > 90
     if (any(subset_sample$Query_Cover > 90)) {
-      subset_sample <- subset_sample[subset_sample$Query_Cover > 90, ]  # Filtrer celles > 90
+      subset_sample <- subset_sample[subset_sample$Query_Cover > 90, ]  # keep only line with query_cover > 90
     }
     
-    # Trouver la valeur maximale de Percentage_Identity
+    # Find max percentage_identity
     max_identity <- max(subset_sample$Percentage_Identity, na.rm = TRUE)
-    subset_sample <- subset_sample[subset_sample$Percentage_Identity == max_identity, ]  # Garder celles avec le max
+    subset_sample <- subset_sample[subset_sample$Percentage_Identity == max_identity, ]  # keep the one with the max
     
-    # S'il reste plusieurs lignes, prendre celle avec Query_Cover le plus élevé
+    # if more than one line, keep the one with the highest Query_Cover
     if (nrow(subset_sample) > 1) {
       max_cover <- max(subset_sample$Query_Cover, na.rm = TRUE)
-      subset_sample <- subset_sample[subset_sample$Query_Cover == max_cover, ]  # Garder celle avec le max Query_Cover
+      subset_sample <- subset_sample[subset_sample$Query_Cover == max_cover, ]  # Keep highest query_cover line
     }
     
-    # S'il reste encore plusieurs lignes, garder une seule (par défaut la première)
+    # if more than one line remains, keep the first one
     if (nrow(subset_sample) > 1) {
-      subset_sample <- subset_sample[1, , drop = FALSE]  # Prendre la première occurrence
+      subset_sample <- subset_sample[1, , drop = FALSE]  # keep the first one
     }
     
-    # Ajouter la ligne filtrée aux résultats finaux
+    # add filtered to final results
     final_filtered_results <- rbind(final_filtered_results, subset_sample)
   }
 }
 
-# Convertir la liste en data.frame final
+# Convert final list into data.frame final
 final_filtered_results <- as.data.frame(final_filtered_results)
-final_filtered_results <- final_filtered_results[, c(setdiff(names(final_filtered_results), "Species")[1:3], "Species", setdiff(names(final_filtered_results), "Species")[-(1:3)])]# Replacer la colonne "Species" en 4ème position
+final_filtered_results <- final_filtered_results[, c(setdiff(names(final_filtered_results), "Species")[1:3], "Species", setdiff(names(final_filtered_results), "Species")[-(1:3)])]# order "Species" col into 4th position
 
 View(final_filtered_results)
 
@@ -173,7 +173,7 @@ species <- unique(final_filtered_results$Species)
 species
 
 
-species_to_identification <- c( # Création d'un dictionnaire de correspondance pour "Identification_results"
+species_to_identification <- c( # Create a dictionary of corresponding for "Identification_results"
   "Drosophila malerkotliana" = "Bipectinata complex sp.",
   "Drosophila paulistorum" = "D. paulistorum",
   "Drosophila sturtevanti" = "D. sturtevanti",
@@ -195,7 +195,7 @@ species_to_identification <- c( # Création d'un dictionnaire de correspondance 
 )
 
 
-final_filtered_results$Identification_results <- species_to_identification[final_filtered_results$Species] # Ajouter la colonne "Identification_results" en faisant correspondre les valeurs de "Species"
+final_filtered_results$Identification_results <- species_to_identification[final_filtered_results$Species] #add "Identification_results" column by mapping on "Species" value
 
 final_filtered_results <- final_filtered_results %>%
   mutate(Identification_results = ifelse(Percentage_Identity < 98, NA, Identification_results))
@@ -208,27 +208,26 @@ fichier_excel2 <- "pool.xlsx"
 pool_table <- read_excel(fichier_excel2)
 View(pool_table)
 
-# Transformation de la table pool_table
+# transform pool_table
 pool_table_long <- pool_table %>%
   pivot_longer(cols = everything(), names_to = "Pool", values_to = "Sample") %>%
-  filter(!is.na(Sample))  # Pour supprimer les lignes vides si certaines colonnes ont des longueurs différentes
-View(pool_table_long)
+  filter(!is.na(Sample))  # delete empty line to homogenize
 
-# Ajout des colonnes Species and Locality à pool_table_long
-n_rows <- nrow(pool_table) # Extraction des informations species et locality des 3 dernières lignes de pool_table
+# Add Species and Locality col at pool_table_long
+n_rows <- nrow(pool_table) # extract information on species et locality from 3 last lines from pool_table
 species_info <- pool_table[n_rows - 2, ]
 locality_info <- pool_table[n_rows - 1, ]
 
-species_df <- data.frame(Pool = names(species_info), Species = as.character(species_info)) # Création de dataframes pour species et locality
+species_df <- data.frame(Pool = names(species_info), Species = as.character(species_info)) # create dataframes species et locality
 locality_df <- data.frame(Pool = names(locality_info), Locality = as.character(locality_info))
 
-pool_table_long <- pool_table_long %>% # Fusion des informations species et locality avec pool_table_long
+pool_table_long <- pool_table_long %>% ## adding species and locality informations with pool_table_long
   left_join(species_df, by = "Pool") %>%
   left_join(locality_df, by = "Pool")
 View(pool_table_long)
 
 
-# Fusionner les deux tables par correspondance entre sample et Sample_ID
+# merge both tables
 merged_result <- final_filtered_results %>%
   left_join(pool_table_long, by = c("Sample_ID" = "Sample"))
 
