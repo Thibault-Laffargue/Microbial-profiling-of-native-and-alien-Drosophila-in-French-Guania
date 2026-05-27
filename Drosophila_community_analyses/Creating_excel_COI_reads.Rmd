@@ -1,0 +1,298 @@
+---
+title: "Untitled"
+author: "T.Laffargue"
+date: "2024-11-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Typing Drosophila/All sequence")
+
+############################################ instal packages #########################################################
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Biostrings")
+
+install.packages("readxl")
+install.packages("writexl")
+
+
+library(Biostrings)
+library(readxl)
+library(writexl)
+library(dplyr)
+
+
+########################################### Importing data ##########################################################
+
+#COI 1
+COI1 <- "consensus.edit.COI1.fasta"
+sequences1 <- readDNAStringSet(COI1)
+
+sequence_names1 <- names(sequences1)
+sequence_data1 <- as.character(sequences1)
+
+
+COI1_table <- data.frame(Name = sequence_names1, Sequence = sequence_data1, stringsAsFactors = FALSE)
+View(COI1_table)
+
+
+# COI 2
+
+COI2 <- "consensus.edit.COI2.fasta"
+sequences2 <- readDNAStringSet(COI2)
+
+sequence_names2 <- names(sequences2)
+sequence_data2 <- as.character(sequences2)
+
+
+COI2_table <- data.frame(Name = sequence_names2, Sequence = sequence_data2, stringsAsFactors = FALSE)
+View(COI2_table)
+
+# COI 3
+
+COI3 <- "consensus.edit.COI3.fasta"
+sequences3 <- readDNAStringSet(COI3)
+
+sequence_names3 <- names(sequences3)
+sequence_data3 <- as.character(sequences3)
+
+
+COI3_table <- data.frame(Name = sequence_names3, Sequence = sequence_data3, stringsAsFactors = FALSE)
+View(COI3_table)
+
+# COI 4
+
+COI4 <- "consensus.edit.COI4.fasta"
+sequences4 <- readDNAStringSet(COI4)
+
+sequence_names4 <- names(sequences4)
+sequence_data4 <- as.character(sequences4)
+
+
+COI4_table <- data.frame(Name = sequence_names4, Sequence = sequence_data4, stringsAsFactors = FALSE)
+View(COI4_table)
+
+# COI 5
+
+COI5 <- "consensus.edit.COI5.fasta"
+sequences5 <- readDNAStringSet(COI5)
+
+sequence_names5 <- names(sequences5)
+sequence_data5 <- as.character(sequences5)
+
+
+COI5_table <- data.frame(Name = sequence_names5, Sequence = sequence_data5, stringsAsFactors = FALSE)
+View(COI5_table)
+
+# COI 6
+
+COI6 <- "consensus.edit.COI6.fasta"
+sequences6 <- readDNAStringSet(COI6)
+
+sequence_names6 <- names(sequences6)
+sequence_data6 <- as.character(sequences6)
+
+
+COI6_table <- data.frame(Name = sequence_names6, Sequence = sequence_data6, stringsAsFactors = FALSE)
+View(COI6_table)
+
+# COI 7
+
+COI7 <- "consensus.edit.COI7.fasta"
+sequences7 <- readDNAStringSet(COI7)
+
+sequence_names7 <- names(sequences7)
+sequence_data7 <- as.character(sequences7)
+
+
+COI7_table <- data.frame(Name = sequence_names7, Sequence = sequence_data7, stringsAsFactors = FALSE)
+View(COI7_table)
+
+# COI 8
+
+COI8 <- "consensus.edit.COI8.fasta"
+sequences8 <- readDNAStringSet(COI8)
+
+sequence_names8 <- names(sequences8)
+sequence_data8 <- as.character(sequences8)
+
+
+COI8_table <- data.frame(Name = sequence_names8, Sequence = sequence_data8, stringsAsFactors = FALSE)
+View(COI8_table)
+
+# COI 9
+
+COI9 <- "consensus.edit.COI9.fasta"
+sequences9 <- readDNAStringSet(COI9)
+
+sequence_names9 <- names(sequences9)
+sequence_data9 <- as.character(sequences9)
+
+
+COI9_table <- data.frame(Name = sequence_names9, Sequence = sequence_data9, stringsAsFactors = FALSE)
+View(COI9_table)
+
+# COI Metadata
+
+COI_metadata <- read_excel("COI_Data.xlsx")
+View(COI_metadata)
+
+######################################################### Cleaning COI table ##################################################################################
+
+#supprimer les séquences références
+
+table_names <- paste0("COI", 1:9, "_table") # Regrouper toutes les tables dans une liste
+tables <- mget(table_names)
+
+
+filter_rows <- function(df) { # Vérification : est-ce un data.frame et a-t-il des noms de ligne ?
+  if (!is.data.frame(df) || is.null(rownames(df))) {
+    stop("Table is not a data.frame or has no rownames.")
+  }
+  rows_to_keep <- !grepl("^(Drosophila|Zaprionus)", rownames(df)) # Identifier les lignes à garder
+  return(df[rows_to_keep, , drop = FALSE]) # Retourner la table filtrée
+}
+
+filtered_tables <- lapply(tables, function(table) { # Appliquer la fonction de filtrage à chaque table
+  tryCatch({
+    filter_rows(table)
+  }, error = function(e) {
+    message("Error processing table: ", e$message)
+    return(NULL)  # Retourner NULL si une erreur survient
+  })
+})
+
+filtered_tables <- filtered_tables[!sapply(filtered_tables, is.null)] # Supprimer les tables NULL de la liste
+list2env(filtered_tables, envir = .GlobalEnv) # Optionnel : réinjecter dans l'environnement global
+
+
+
+
+
+
+# Ajouter la colonne round à chaque table
+
+table_names <- paste0("COI", 1:9, "_table") # Regrouper toutes les tables dans une liste
+tables <- mget(table_names)
+
+tables <- mapply(function(table, round_number) {
+  table$round <- round_number  # Ajouter la colonne
+  return(table)
+}, tables, 1:9, SIMPLIFY = FALSE)
+
+list2env(tables, envir = .GlobalEnv) # Réinjecter les tables modifiées dans l'environnement global
+
+
+
+
+
+
+
+
+#reformatage des noms de séquences
+
+table_names <- paste0("COI", 1:9, "_table")
+tables <- mget(table_names)
+
+clean_names <- function(df) { # Fonction pour nettoyer la colonne "Name"
+  if (!"Name" %in% colnames(df)) { # Vérifier que la colonne "Name" existe
+    stop("The table does not contain a 'Name' column.")
+  }
+  df$Name <- sub(".*_(F[1-8]R[1-9][0-2]?).*", "\\1", df$Name) # Extraire uniquement la partie correspondant aux primers (F1R1, etc.)
+  
+  return(df)
+}
+
+
+tables <- lapply(tables, clean_names) # Appliquer la fonction à chaque table
+list2env(tables, envir = .GlobalEnv) # Réinjecter les tables modifiées dans l'environnement global
+
+
+
+
+#Concaténer les tables 
+table_names <- paste0("COI", 1:9, "_table")
+tables <- mget(table_names) 
+
+
+COI_sequence <- do.call(rbind, tables) # Combiner les tables en une seule
+COI_sequence$source <- rep(table_names, times = sapply(tables, nrow)) # Ajouter une colonne "source" pour indiquer l'origine des données
+
+COI_sequence$source <- NULL
+rownames(COI_sequence) <- NULL
+COI_sequence <- COI_sequence[, c("Name", "round", "Sequence")]
+
+View(COI_sequence)
+
+
+
+
+
+################################################## Creating a consensus sequence table ################################################################
+
+#homogéneisation des format de primer
+
+COI_metadata$Barcodes <- gsub("/", "", COI_metadata$Barcodes)
+View(COI_metadata)
+
+
+#Création de la table 
+
+consensus_sequence_table <- COI_metadata
+View(consensus_sequence_table)
+
+consensus_sequence_table <- merge(
+  consensus_sequence_table, 
+  COI_sequence[, c("Name", "round", "Sequence")], 
+  by.x = c("Barcodes", "Sequencing_Run"), 
+  by.y = c("Name", "round"), 
+  all.x = TRUE  # Garder toutes les lignes de consensus_sequence_table
+)
+
+# Renommer la colonne "Sequence" en "Consensus_Sequence"
+colnames(consensus_sequence_table)[colnames(consensus_sequence_table) == "Sequence"] <- "Consensus_Sequence"
+
+
+
+write_xlsx(consensus_sequence_table, "COI_consensus_sequence_table.xlsx")
+
+####################################### Creating a fasta file with all COI consensus sequence ###########################################################
+
+
+
+
+COI_sequence <- consensus_sequence_table%>%
+  select(samples_ID, Consensus_Sequence)
+View(COI_sequence)
+
+
+output_fasta <- "COI_sequences.fasta" # Définir le nom du fichier de sortie
+
+fasta_sequences <- DNAStringSet(COI_sequence$Consensus_Sequence) # Créer un objet de type DNAStringSet avec les séquences
+names(fasta_sequences) <- COI_sequence$samples_ID # Ajouter les noms des séquences en tant que noms dans l'objet DNAStringSet
+writeXStringSet(fasta_sequences, filepath = output_fasta, format = "fasta") #écrire le fichier fasta
+cat("\n✅ Fichier FASTA enregistré sous", output_fasta, "\n")  # Message de confirmation
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

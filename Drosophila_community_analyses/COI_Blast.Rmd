@@ -1,0 +1,274 @@
+---
+title: "Untitled"
+author: "T.Laffargue"
+date: "2025-02-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Typing Drosophila/All sequence")
+
+############################################ install packages #########################################################
+
+
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Biostrings")
+
+install.packages("dplyr")
+
+install.packages("rentrez")
+install.packages("httr")
+install.packages("xml2")
+install.packages("stringr")
+install.packages("readxl")
+install.packages("writexl")
+
+########################################## Chargement des librairy ###################################################
+
+library(httr)
+library(rentrez)
+library(Biostrings)
+library(xml2)
+library(dplyr)
+library(stringr)
+library(readxl)
+library(tidyr)
+library(writexl)
+
+#############################################################################################################
+##################################### clean the Blast_result_table ##########################################
+#############################################################################################################
+
+#### Checking results ####
+Blast_result_brute <- readr::read_csv("blast_results.csv") #importation des résultats
+View(Blast_result_brute) #Visualisation 
+
+Number_of_samples <- unique(Blast_result_brute$qseqid) #Permet de vérifier que tous les échantillons ont été blasté
+Number_of_samples
+
+#### Clean columns ####
+
+Blast_result_brute$Species <- sub("^.*?((Drosophila|Scaptomyza|Scaptodrosophila|Zaprionus)\\s+\\w+).*", "\\1", Blast_result_brute$stitle)#On ne garde que le nom d'espèce
+
+colnames(Blast_result_brute)[colnames(Blast_result_brute) == "qseqid"] <- "Sample_ID" #renommée les colonnes
+colnames(Blast_result_brute)[colnames(Blast_result_brute) == "sseqid"] <- "HitID"
+colnames(Blast_result_brute)[colnames(Blast_result_brute) == "pident"] <- "Percentage_Identity"
+colnames(Blast_result_brute)[colnames(Blast_result_brute) == "qcovs"] <- "Query_Cover"
+
+Blast_result_brute <- Blast_result_brute[, !(names(Blast_result_brute) %in% c(
+  "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", 
+  "evalue", "bitscore", "qcovhsp", "stitle"
+))]
+View(Blast_result_brute)
+
+write_xlsx(Blast_result_brute, "Blast_result_brute.xlsx")
+
+#### Filtrer les résultats ####
+
+# Créer une liste pour stocker les résultats intermédiaires (espèce/échantillon)
+filtered_results_species <- list()
+
+# Boucles sur les valeurs uniques de Sample_ID et Species
+for (sample in unique(Blast_result_brute$Sample_ID)) {
+  for (species in unique(Blast_result_brute$Species)) {
+    
+    # Sélection des lignes correspondant au sample et à l'espèce
+    subset_data <- Blast_result_brute[Blast_result_brute$Sample_ID == sample & Blast_result_brute$Species == species, ]
+    
+    # Vérifier si des lignes existent
+    if (nrow(subset_data) > 0) {
+      
+      # Vérifier si au moins une ligne a Query_Cover > 90
+      if (any(subset_data$Query_Cover > 90)) {
+        subset_data <- subset_data[subset_data$Query_Cover > 90, ]  # Filtrer seulement celles > 90
+      }
+      
+      # Trouver la valeur maximale de Percentage_Identity
+      max_identity <- max(subset_data$Percentage_Identity, na.rm = TRUE)
+      subset_data <- subset_data[subset_data$Percentage_Identity == max_identity, ]  # Garder celles avec le max
+      
+      # S'il reste plusieurs lignes, prendre celle avec Query_Cover le plus élevé
+      if (nrow(subset_data) > 1) {
+        max_cover <- max(subset_data$Query_Cover, na.rm = TRUE)
+        subset_data <- subset_data[subset_data$Query_Cover == max_cover, ]  # Garder celle avec le max Query_Cover
+      }
+      
+      # S'il reste encore plusieurs lignes, garder une seule (par défaut la première)
+      if (nrow(subset_data) > 1) {
+        subset_data <- subset_data[1, , drop = FALSE]  # Prendre la première occurrence
+      }
+      
+      # Ajouter la ligne filtrée aux résultats intermédiaires
+      filtered_results_species <- rbind(filtered_results_species, subset_data)
+    }
+  }
+}
+
+# Convertir en data.frame après la première étape
+filtered_results_species <- as.data.frame(filtered_results_species)
+
+
+# ----------------- ÉTAPE 2 : Sélection de la meilleure ligne par échantillon -----------------
+
+# Créer une liste pour stocker les résultats finaux (une seule ligne par échantillon)
+final_filtered_results <- list()
+
+# Boucle sur chaque échantillon unique
+for (sample in unique(filtered_results_species$Sample_ID)) {
+  
+  # Sélectionner les lignes correspondant à cet échantillon
+  subset_sample <- filtered_results_species[filtered_results_species$Sample_ID == sample, ]
+  
+  # Vérifier si des lignes existent
+  if (nrow(subset_sample) > 0) {
+    
+    # Vérifier si au moins une ligne a Query_Cover > 90
+    if (any(subset_sample$Query_Cover > 90)) {
+      subset_sample <- subset_sample[subset_sample$Query_Cover > 90, ]  # Filtrer celles > 90
+    }
+    
+    # Trouver la valeur maximale de Percentage_Identity
+    max_identity <- max(subset_sample$Percentage_Identity, na.rm = TRUE)
+    subset_sample <- subset_sample[subset_sample$Percentage_Identity == max_identity, ]  # Garder celles avec le max
+    
+    # S'il reste plusieurs lignes, prendre celle avec Query_Cover le plus élevé
+    if (nrow(subset_sample) > 1) {
+      max_cover <- max(subset_sample$Query_Cover, na.rm = TRUE)
+      subset_sample <- subset_sample[subset_sample$Query_Cover == max_cover, ]  # Garder celle avec le max Query_Cover
+    }
+    
+    # S'il reste encore plusieurs lignes, garder une seule (par défaut la première)
+    if (nrow(subset_sample) > 1) {
+      subset_sample <- subset_sample[1, , drop = FALSE]  # Prendre la première occurrence
+    }
+    
+    # Ajouter la ligne filtrée aux résultats finaux
+    final_filtered_results <- rbind(final_filtered_results, subset_sample)
+  }
+}
+
+# Convertir la liste en data.frame final
+final_filtered_results <- as.data.frame(final_filtered_results)
+final_filtered_results <- final_filtered_results[, c(setdiff(names(final_filtered_results), "Species")[1:3], "Species", setdiff(names(final_filtered_results), "Species")[-(1:3)])]# Replacer la colonne "Species" en 4ème position
+
+View(final_filtered_results)
+
+
+
+###################################################################################################
+########################################## Found miss identified pool #############################
+###################################################################################################
+
+fichier_excel <- "COI_consensus_sequence_table.xlsx"
+COI_consensus_sequence_table <- read_excel(fichier_excel)
+View(COI_consensus_sequence_table)
+
+
+species <- unique(final_filtered_results$Species)
+species
+
+
+species_to_identification <- c( # Création d'un dictionnaire de correspondance pour "Identification_results"
+  "Drosophila malerkotliana" = "Bipectinata complex sp.",
+  "Drosophila paulistorum" = "D. paulistorum",
+  "Drosophila sturtevanti" = "D. sturtevanti",
+  "Zaprionus indianus" = "Z. indianus",
+  "Drosophila willistoni" = "D. willistoni",
+  "Drosophila melanogaster" = "D. melanogaster",
+  "Drosophila ananassae" = "D. ananassae",
+  "Drosophila prosaltans" = "Saltans sp.",
+  "Drosophila polymorpha" = "D. polymorpha",
+  "Scaptodrosophila latifasciaeformis" = "Sc. latifasciaeformis",
+  "Scaptomyza nigrita" = "Sc. nigrita",
+  "Drosophila tropicalis" = "Willistoni sp.",
+  "Drosophila nebulosa" = "Willistoni sp.",
+  "Drosophila neocordata" = "Saltans sp.",
+  "Drosophila nigrodunni" = "D. nigrodunni",
+  "Drosophila equinoxialis" = "Willistoni sp.",
+  "Drosophila capricorni" = "Willistoni sp.",
+  "Drosophila pseudosordidula" = "D.pseudosordidula"
+)
+
+
+final_filtered_results$Identification_results <- species_to_identification[final_filtered_results$Species] # Ajouter la colonne "Identification_results" en faisant correspondre les valeurs de "Species"
+
+final_filtered_results <- final_filtered_results %>%
+  mutate(Identification_results = ifelse(Percentage_Identity < 98, NA, Identification_results))
+
+View(final_filtered_results)
+
+############################### Add pool #########################################
+
+fichier_excel2 <- "pool.xlsx"
+pool_table <- read_excel(fichier_excel2)
+View(pool_table)
+
+# Transformation de la table pool_table
+pool_table_long <- pool_table %>%
+  pivot_longer(cols = everything(), names_to = "Pool", values_to = "Sample") %>%
+  filter(!is.na(Sample))  # Pour supprimer les lignes vides si certaines colonnes ont des longueurs différentes
+View(pool_table_long)
+
+# Ajout des colonnes Species and Locality à pool_table_long
+n_rows <- nrow(pool_table) # Extraction des informations species et locality des 3 dernières lignes de pool_table
+species_info <- pool_table[n_rows - 2, ]
+locality_info <- pool_table[n_rows - 1, ]
+
+species_df <- data.frame(Pool = names(species_info), Species = as.character(species_info)) # Création de dataframes pour species et locality
+locality_df <- data.frame(Pool = names(locality_info), Locality = as.character(locality_info))
+
+pool_table_long <- pool_table_long %>% # Fusion des informations species et locality avec pool_table_long
+  left_join(species_df, by = "Pool") %>%
+  left_join(locality_df, by = "Pool")
+View(pool_table_long)
+
+
+# Fusionner les deux tables par correspondance entre sample et Sample_ID
+merged_result <- final_filtered_results %>%
+  left_join(pool_table_long, by = c("Sample_ID" = "Sample"))
+
+merged_result <- merged_result %>%
+  dplyr::rename(
+    Species = Species.x,
+    pool_identification = Species.y
+  )
+View(merged_result)
+
+write_xlsx(merged_result, "Blast_results_filtered.xlsx")
+
+################################ Isolate potential contamination in pool ###################################
+Potential_contamination <- merged_result %>%
+  filter(is.na(Identification_results) | Identification_results != pool_identification)
+Potential_contamination <- Potential_contamination %>%
+  filter(!(Identification_results == "D. willistoni" & pool_identification == "Willistoni sp.") &
+         !(Identification_results == "D. melanogaster" & pool_identification == "melanogaster sp.") &
+         !(Identification_results == "D. sturtevanti" & pool_identification == "Saltans sp."))
+View(Potential_contamination)
+
+write_xlsx(Potential_contamination, "Miss_identify_sample.xlsx")
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
