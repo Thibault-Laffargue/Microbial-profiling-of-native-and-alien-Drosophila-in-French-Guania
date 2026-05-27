@@ -1,0 +1,4 @@
+#Raw data need to be upload from European Nucleotide Archive (ENA) 
+#under study accession number PRJEB112398.
+tail -n +3 fastq_meta_ENA_completed.tsv | awk -F '\t' '{system("mkdir -p \"" $4 "\" && mv \"" $9 "\" \"" $4 "/\"")}'
+
