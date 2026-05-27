@@ -144,84 +144,78 @@ View(COI_metadata)
 
 ######################################################### Cleaning COI table ##################################################################################
 
-#supprimer les séquences références
+#delete refs sequence
 
-table_names <- paste0("COI", 1:9, "_table") # Regrouper toutes les tables dans une liste
+table_names <- paste0("COI", 1:9, "_table") # Regroup all table in one list
 tables <- mget(table_names)
 
 
-filter_rows <- function(df) { # Vérification : est-ce un data.frame et a-t-il des noms de ligne ?
+filter_rows <- function(df) { # Verif
   if (!is.data.frame(df) || is.null(rownames(df))) {
     stop("Table is not a data.frame or has no rownames.")
   }
-  rows_to_keep <- !grepl("^(Drosophila|Zaprionus)", rownames(df)) # Identifier les lignes à garder
-  return(df[rows_to_keep, , drop = FALSE]) # Retourner la table filtrée
+  rows_to_keep <- !grepl("^(Drosophila|Zaprionus)", rownames(df)) # Identifing line to keep
+  return(df[rows_to_keep, , drop = FALSE]) # reorient table
 }
 
-filtered_tables <- lapply(tables, function(table) { # Appliquer la fonction de filtrage à chaque table
+filtered_tables <- lapply(tables, function(table) { # Apply the function to each table
   tryCatch({
     filter_rows(table)
   }, error = function(e) {
     message("Error processing table: ", e$message)
-    return(NULL)  # Retourner NULL si une erreur survient
+    return(NULL)  # Return Null in case of mistake
   })
 })
 
-filtered_tables <- filtered_tables[!sapply(filtered_tables, is.null)] # Supprimer les tables NULL de la liste
-list2env(filtered_tables, envir = .GlobalEnv) # Optionnel : réinjecter dans l'environnement global
+filtered_tables <- filtered_tables[!sapply(filtered_tables, is.null)] # Delete NULL table from the list
+list2env(filtered_tables, envir = .GlobalEnv) # re-inject in "normale" environment.
 
 
 
 
+# Add round col
 
-
-# Ajouter la colonne round à chaque table
-
-table_names <- paste0("COI", 1:9, "_table") # Regrouper toutes les tables dans une liste
+table_names <- paste0("COI", 1:9, "_table") # Regroup all table in one list
 tables <- mget(table_names)
 
 tables <- mapply(function(table, round_number) {
-  table$round <- round_number  # Ajouter la colonne
+  table$round <- round_number  # Add col
   return(table)
 }, tables, 1:9, SIMPLIFY = FALSE)
 
-list2env(tables, envir = .GlobalEnv) # Réinjecter les tables modifiées dans l'environnement global
+list2env(tables, envir = .GlobalEnv) # re-inject in "normale" environment.
 
 
 
 
-
-
-
-
-#reformatage des noms de séquences
+#reformulate sequence name
 
 table_names <- paste0("COI", 1:9, "_table")
 tables <- mget(table_names)
 
-clean_names <- function(df) { # Fonction pour nettoyer la colonne "Name"
-  if (!"Name" %in% colnames(df)) { # Vérifier que la colonne "Name" existe
+clean_names <- function(df) { # Cleaning col "Name"
+  if (!"Name" %in% colnames(df)) { # verify that col "Name" exist
     stop("The table does not contain a 'Name' column.")
   }
-  df$Name <- sub(".*_(F[1-8]R[1-9][0-2]?).*", "\\1", df$Name) # Extraire uniquement la partie correspondant aux primers (F1R1, etc.)
+  df$Name <- sub(".*_(F[1-8]R[1-9][0-2]?).*", "\\1", df$Name) # extracted primer from the sequence name (F1R1, etc.)
   
   return(df)
 }
 
 
-tables <- lapply(tables, clean_names) # Appliquer la fonction à chaque table
-list2env(tables, envir = .GlobalEnv) # Réinjecter les tables modifiées dans l'environnement global
+tables <- lapply(tables, clean_names) # apply fonction to each table
+list2env(tables, envir = .GlobalEnv) # re-inject in "normale" environment.
 
 
 
 
-#Concaténer les tables 
+#Concat tables
 table_names <- paste0("COI", 1:9, "_table")
 tables <- mget(table_names) 
 
 
-COI_sequence <- do.call(rbind, tables) # Combiner les tables en une seule
-COI_sequence$source <- rep(table_names, times = sapply(tables, nrow)) # Ajouter une colonne "source" pour indiquer l'origine des données
+COI_sequence <- do.call(rbind, tables) # Combine tables in one
+COI_sequence$source <- rep(table_names, times = sapply(tables, nrow)) # add col "source" for data origine
 
 COI_sequence$source <- NULL
 rownames(COI_sequence) <- NULL
@@ -232,16 +226,15 @@ View(COI_sequence)
 
 
 
-
 ################################################## Creating a consensus sequence table ################################################################
 
-#homogéneisation des format de primer
+#homogenization of primer format
 
 COI_metadata$Barcodes <- gsub("/", "", COI_metadata$Barcodes)
 View(COI_metadata)
 
 
-#Création de la table 
+#Creat table
 
 consensus_sequence_table <- COI_metadata
 View(consensus_sequence_table)
@@ -251,10 +244,10 @@ consensus_sequence_table <- merge(
   COI_sequence[, c("Name", "round", "Sequence")], 
   by.x = c("Barcodes", "Sequencing_Run"), 
   by.y = c("Name", "round"), 
-  all.x = TRUE  # Garder toutes les lignes de consensus_sequence_table
+  all.x = TRUE  # keep line of consensus_sequence_table
 )
 
-# Renommer la colonne "Sequence" en "Consensus_Sequence"
+# rename col "Sequence" into "Consensus_Sequence"
 colnames(consensus_sequence_table)[colnames(consensus_sequence_table) == "Sequence"] <- "Consensus_Sequence"
 
 
@@ -271,12 +264,12 @@ COI_sequence <- consensus_sequence_table%>%
 View(COI_sequence)
 
 
-output_fasta <- "COI_sequences.fasta" # Définir le nom du fichier de sortie
+output_fasta <- "COI_sequences.fasta" # Output file name
 
-fasta_sequences <- DNAStringSet(COI_sequence$Consensus_Sequence) # Créer un objet de type DNAStringSet avec les séquences
-names(fasta_sequences) <- COI_sequence$samples_ID # Ajouter les noms des séquences en tant que noms dans l'objet DNAStringSet
-writeXStringSet(fasta_sequences, filepath = output_fasta, format = "fasta") #écrire le fichier fasta
-cat("\n✅ Fichier FASTA enregistré sous", output_fasta, "\n")  # Message de confirmation
+fasta_sequences <- DNAStringSet(COI_sequence$Consensus_Sequence) # Create object type DNAStringSet with sequences
+names(fasta_sequences) <- COI_sequence$samples_ID # add names of sequences as name in object DNAStringSet
+writeXStringSet(fasta_sequences, filepath = output_fasta, format = "fasta") #write fasta_file
+cat("\n✅ Fichier FASTA enregistré sous", output_fasta, "\n")  # writting validation
 ## R Markdown
 
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
