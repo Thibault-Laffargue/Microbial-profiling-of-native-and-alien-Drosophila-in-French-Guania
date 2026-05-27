@@ -1,0 +1,36 @@
+#Raw data need to be upload from European Nucleotide Archive (ENA) 
+#under study accession number PRJEB112398.
+tail -n +3 fastq_meta_ENA_completed.tsv | awk -F '\t' '{system("mkdir -p \"" $4 "\" && mv \"" $9 "\" \"" $4 "/\"")}'
+
+
+
+
+
+#Consensus sequence and creation of consensus file.
+for dir in Guyane*/; do
+    dir=${dir%/}
+    num=${dir#Guyane}
+
+    output="consensus.edit.COI${num}.fasta"
+    > "$output"
+
+    for i in "$dir"/*.fastq.gz; do
+        pfix=$(basename "$i" .fastq.gz)
+
+        medaka smolecule \
+            --debug \
+            --model r1041_e82_400bps_hac_v4.3.0 \
+            --method spoa \
+            "consensus.${pfix}.dir" \
+            "$i"
+
+        bioawk -c fastx -v myname="$pfix" \
+        '{print ">"myname ; print $seq}' \
+        "consensus.${pfix}.dir/consensus.fasta" >> "$output"
+
+    done
+done
+
+
+
+find . -type f -name "consensus.edit*" -exec mv {} . \;
