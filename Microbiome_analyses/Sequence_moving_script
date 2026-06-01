@@ -1,0 +1,3 @@
+#move fastq.gz in good folder. 
+mv 16s_*.fastq.gz bacterial_16s_rRNA_metabarcoding/
+mv ITS_*.fastq.gz Fungi_ITS_metabarcoding/
