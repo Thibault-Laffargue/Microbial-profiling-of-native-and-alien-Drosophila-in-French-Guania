@@ -1,0 +1,121 @@
+#Move out NA file (false barcode detection) and low depth sample (<400)
+python3 move_low_depth_samples.py 
+
+#Creat fasta file from all cleaned.fastq files and add the sample name at the begining of each sequence name
+for f in *_cleaned.fastq; do
+  sample="${f%_cleaned.fastq}"
+  awk -v s="$sample" 'NR%4==1{h=$0; sub(/^@/,"",h); print ">"s"|"h} NR%4==2{print}' "$f"
+done > all_samples.fasta
+
+#Check orientationn and reverse complement if needed
+vsearch --db db/UNITE_1seqBYtax.fasta --fastaout all_samples.OK.fas --orient all_samples.fasta
+
+#replace"|" by "_" in header
+awk '/^>/{gsub(/\|/,"_")} {print}' all_samples.OK.fas > tmp && mv tmp all_samples.OK.fas
+
+#filter out sequence < 200nt
+awk 'BEGIN{RS=">"; ORS=""; min=200} NR>1{split($0,a,"\n"); h=a[1]; seq=""; for(i=2;i<=length(a);i++) if(a[i]!="") seq=seq a[i]; gsub(/[ \t\r\n]/,"",seq); if(length(seq)>=min) print ">"h"\n"seq"\n"}' all_samples.OK.fas > all_samples.min200.fas
+
+#Check reads quality
+python3 meanQ_from_fasta_subset.py --fasta all_samples.min200.fas
+
+#activate the good environment
+conda activate meshclust
+
+#perform the clustering (output = output.clstr, MeShClust version = V3)
+~/Identity/bin/meshclust -d all_samples.min200.fas -o output.clstr
+
+#come back to drosobiome2025 env
+conda activate drosobiome2025
+
+#Creat a table of size distribution of cluster
+python3 clustering_distrib.py output.clstr
+
+#count the number of sequence contain in cluster of size < ou = 10 reads and count the number of sequence contain in cluster of size > 10
+awk -F'\t' '
+NR==1 {next}                # skip header
+$1<=10 {le10 += $1*$2}      # sequences in clusters size <=10
+$1>10  {gt10 += $1*$2}      # sequences in clusters size >10
+END {
+  print "seq_in_clusters_<=10\t" le10
+  print "seq_in_clusters_>10\t"  gt10
+}' cluster_size_distribution.tsv
+
+#create a fasta file with centroid sequence for each cluster
+python3 extract_centroid.py --clstr output.clstr --fasta all_samples.min200.fas --out centroids.fasta
+
+#Create OTU_Table
+python3 make_otu_table_ws.py output.clstr OL4_OTU_table.tsv
+
+#activate the good env
+conda activate biom_env
+
+#conversion to BIOM format
+chmod +x tsv_to_biom_json_int.py
+./tsv_to_biom_json_int.py OL4_OTU_table.tsv OL4_OTU_table.json.biom
+
+#change env
+conda activate frogs_env
+
+
+#frogs remove_chimera
+
+remove_chimera.py \
+  --input-fasta centroids.fasta \
+  --input-biom OL4_OTU_table.json.biom \
+  --output-fasta centroids_without_chim_frogs.fasta \
+  --output-biom OL4_OTU_table_without_chim.biom
+
+#good env
+conda activate drosobiome2025
+
+#chimera stat
+python3 chimera_removal_stats.py centroids.fasta centroids_without_chim_frogs.fasta OL4_OTU_table.tsv
+
+#come back to conversion environment
+conda activate biom_env
+
+#convert the Biom output of frogs into tsv OTU_table
+python3 biom_to_tsv.py OL4_OTU_table_without_chim.biom
+
+#change of environment
+conda activate drosobiome2025
+
+#creat the database repertory
+mkdir db 
+
+#import UNITE_1seqBYtax.fasta in db
+
+#replace Header in db.fasta by shorter id and map them to the original header in a new file (this step need to be done because of blast software which didn't allow header > 50 caracter
+python3 prepare_unite_blca_db.py \
+  -i db/UNITE_1seqBYtax.fasta \
+  --out-fasta db/UNITE_1seqBYtax.shortid.fasta \
+  --out-map   db/UNITE_1seqBYtax.shortid.map.tsv \
+  --out-tax   db/UNITE_1seqBYtax.shortid.BLCA.taxonomy
+
+#prepare the NCBI database
+makeblastdb -in db/UNITE_1seqBYtax.shortid.fasta \
+  -dbtype nucl -parse_seqids \
+  -out db/UNITE_1seqBYtax.shortid
+
+#Run BLCA for taxonomic affiliation
+python3 ~/tools/BLCA/2.blca_main.py \
+  -i centroids_without_chim_frogs.fasta \
+  -q db/UNITE_1seqBYtax.shortid \
+  -r db/UNITE_1seqBYtax.shortid.BLCA.taxonomy \
+  --iset 80 \
+  -c 0.60 \
+  -o centroids.UNITE.blca.out \
+  -p 80
+
+#Visualizing results
+less centroids.UNITE.blca.out
+
+#Setting the confidence threshold to 0.8 and generating the tax_table
+python3 blca_to_phyloseq_tax_table.py \
+  --in centroids.UNITE.blca.out \
+  --out OL4_tax_table.tsv \
+  --threshold 0.8
+
+#replace NA from superkingdom which doesen't exist in database by kingdom information
+python3 find_kingdom.py
