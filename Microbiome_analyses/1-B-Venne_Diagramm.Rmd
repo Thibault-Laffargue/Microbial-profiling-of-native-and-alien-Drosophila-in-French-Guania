@@ -1,0 +1,273 @@
+---
+title: "1-A Venne Diagramm"
+author: "T.Laffargue"
+date: "2026-03-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#ggplot2
+install.packages("ggplot2")
+
+#phytools
+install.packages("ape")
+install.packages("mnormt") #don't forgot to answer no at the question.
+install.packages("expm")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Biostrings")
+install.packages("remotes")
+library(remotes)
+remotes::install_github("KlausVigo/phangorn")
+install.packages("phytools")
+
+#dplyr
+install.packages("dplyr")
+
+#ranacapa
+BiocManager::install("multtest")
+if (!requireNamespace("devtools", quietly = TRUE))
+      install.packages('devtools')
+library(devtools)
+devtools::install_github("gauravsk/ranacapa")
+
+#gridExtra
+install.packages("gridExtra")
+
+#vegan
+install.packages("vegan")
+
+#usedist
+install.packages("usedist")
+
+#breakaway
+install.packages("breakaway")
+
+#magrittr
+install.packages("magrittr")
+
+#tidyverse
+install.packages("tidyverse")
+
+#DESeq2
+BiocManager::install("DESeq2")
+
+#PMCMRplus
+install.packages("PMCMRplus")
+
+#openxlsx
+install.packages("openxlsx")
+
+#rstatix
+install.packages("rstatix")
+
+#reshape2
+install.packages("reshape2")
+
+####### Library ######
+
+library(phyloseq)
+library(ggplot2)
+library(phytools)
+library(dplyr)
+library(ranacapa)
+library(gridExtra)
+library(vegan)
+library(usedist)
+library(openxlsx)
+
+library(breakaway)
+library(magrittr)
+library(tidyverse)
+library(DESeq2)
+library(PMCMRplus)
+library(rstatix)
+library(reshape2)
+library(patchwork)
+library(RColorBrewer)
+library(ape)
+library(readxl)
+library(VennDiagram)
+library(grid)
+library(ggplotify)
+
+###############################################################################
+
+Make_Venne_Diagramme <- function(prefix, physeq_file) {
+  
+  physeq_clean <- readRDS(physeq_file)
+  
+  # Vérifications
+  if (!inherits(physeq_clean, "phyloseq")) {
+    stop("L'objet lu n'est pas un objet phyloseq.")
+  }
+  
+  sam_df <- data.frame(sample_data(physeq_clean))
+  
+  if (!"Category" %in% colnames(sam_df)) {
+    stop("La colonne 'Category' est absente de sample_data(physeq_clean).")
+  }
+  
+  # Delete sample without Category
+  sam_df <- sam_df[!is.na(sam_df$Category), , drop = FALSE]
+  physeq_clean <- prune_samples(rownames(sam_df), physeq_clean)
+  
+  # OTU Table
+  otu <- as(otu_table(physeq_clean), "matrix")
+  
+  # Adding taxa in line names
+  if (!taxa_are_rows(physeq_clean)) {
+    otu <- t(otu)
+  }
+  
+  # Force order
+  categories <- c("Native", "Invasive")
+  
+  if (!all(categories %in% unique(as.character(sam_df$Category)))) {
+    stop("Les catégories 'Native' et 'Invasive' doivent être présentes dans sample_data.")
+  }
+  
+  # Build set
+  venn_sets <- lapply(categories, function(cat) {
+    samples_cat <- rownames(sam_df)[sam_df$Category == cat]
+    
+    if (length(samples_cat) == 0) {
+      return(character(0))
+    }
+    
+    rownames(otu)[rowSums(otu[, samples_cat, drop = FALSE] > 0) > 0]
+  })
+  
+  names(venn_sets) <- categories
+  
+  native_set   <- venn_sets$Native
+  invasive_set <- venn_sets$Invasive
+  
+  total_otus    <- length(union(native_set, invasive_set))
+  native_only   <- length(setdiff(native_set, invasive_set))
+  invasive_only <- length(setdiff(invasive_set, native_set))
+  shared_otus   <- length(intersect(native_set, invasive_set))
+  
+  # Venn object without labels
+  venn_obj <- VennDiagram::draw.pairwise.venn(
+    area1 = length(native_set),
+    area2 = length(invasive_set),
+    cross.area = shared_otus,
+    
+    category = c("", ""),
+    
+    fill = c("#9ecae1", "#f4a6a6"),
+    alpha = c(0.7, 0.7),
+    col = c("black", "black"),
+    lwd = 2,
+    lty = "solid",
+    
+    cex = 1.6,
+    fontface = "plain",
+    
+    rotation.degree = 0,
+    euler.d = FALSE,
+    scaled = FALSE,
+    ind = FALSE
+  )
+  
+  # Convert to ggplot with added labels in venn diagramm circles
+  venn_plot <- ggplotify::as.ggplot(function() {
+    grid::grid.draw(venn_obj)
+    
+    grid::grid.text(
+      "Native",
+      x = 0.33, y = 0.72,
+      gp = grid::gpar(col = "#3182bd", fontsize = 14, fontface = "bold")
+    )
+    
+    grid::grid.text(
+      "Invasive",
+      x = 0.67, y = 0.72,
+      gp = grid::gpar(col = "#de2d26", fontsize = 14, fontface = "bold")
+    )
+  }) +
+    ggplot2::labs(
+      title = paste0(prefix, " (Total OTUs = ", total_otus, ")")
+    ) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", hjust = 0.5)
+    )
+  
+  # Final object
+  out <- list(
+    prefix = prefix,
+    physeq = physeq_clean,
+    venn_sets = venn_sets,
+    total_otus = total_otus,
+    counts = c(
+      Native_only   = native_only,
+      Shared        = shared_otus,
+      Invasive_only = invasive_only
+    ),
+    venn_plot = venn_plot
+  )
+  
+  return(out)
+}
+
+# Apply
+
+Venne_16s <- Make_Venne_Diagramme(
+  prefix      = "Bacteria 16S",
+  physeq_file = "Phyloseq_with_tree_16S.rds"
+)
+
+Venne_ITS <- Make_Venne_Diagramme(
+  prefix      = "Fungi ITS",
+  physeq_file = "Clean_phyloseq_OL4.rds"
+)
+
+
+
+combined_plot <- Venne_16s$venn_plot + Venne_ITS$venn_plot
+combined_plot
+
+
+ggsave(
+  filename = "Venn_Comparison.png",
+  plot = combined_plot,
+  width = 10,
+  height = 5,
+  dpi = 300
+)
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
