@@ -1,0 +1,161 @@
+#Move out NA file (false barcode detection) and low depth sample (<1000)
+python3 move_low_depth_samples.py 
+
+
+#Creat fasta file from all cleaned.fastq files and add the sample name at the begining of each sequence name
+for f in *_cleaned.fastq; do
+  sample="${f%_cleaned.fastq}"
+  awk -v s="$sample" 'NR%4==1{h=$0; sub(/^@/,"",h); print ">"s"|"h} NR%4==2{print}' "$f"
+done > all_samples.fasta
+
+#Check orientationn and reverse complement if needed
+Vsearch --db db/SILVA_1seqBYtax.fasta --fastaout all_samples.OK.fas --orient all_samples.fasta
+
+#replace"|" by "_" in header
+awk '/^>/{gsub(/\|/,"_")} {print}' all_samples.OK.fas > tmp && mv tmp all_samples.OK.fas
+
+#filter out sequence < 1000nt
+awk 'BEGIN{RS=">"; ORS=""; min=1000} NR>1{split($0,a,"\n"); h=a[1]; seq=""; for(i=2;i<=length(a);i++) if(a[i]!="") seq=seq a[i]; gsub(/[ \t\r\n]/,"",seq); if(length(seq)>=min) print ">"h"\n"seq"\n"}' all_samples.OK.fas > all_samples.min1000.fas
+
+#Check reads quality
+python3 meanQ_from_fasta_subset.py --fasta all_samples.min1000.fas
+
+#activate the good environment
+conda activate meshclust
+
+#perform the clustering (output = output.clstr, MeShClust version = V3)
+~/Identity/bin/meshclust -d all_samples.min1000.fas -o output.clstr
+
+#Creat a table of size distribution of cluster
+python3 clustering_distrib.py output.clstr
+
+#count the number of sequence contain in cluster of size < ou = 10 reads and count the number of sequence contain in cluster of size > 10
+awk -F'\t' '
+NR==1 {next}                # skip header
+$1<=10 {le10 += $1*$2}      # sequences in clusters size <=10
+$1>10  {gt10 += $1*$2}      # sequences in clusters size >10
+END {
+  print "seq_in_clusters_<=10\t" le10
+  print "seq_in_clusters_>10\t"  gt10
+}' cluster_size_distribution.tsv
+
+#create a fasta file with centroid sequence for each cluster
+python3 extract_centroid.py --clstr output.clstr --fasta all_samples.min1000.fas --out centroids.fasta
+
+#Create OTU_Table
+python3 make_otu_table_ws.py output.clstr 16s_OTU_table.tsv
+
+#activate the good env
+conda activate biom_env
+
+#conversion to BIOM format
+chmod +x tsv_to_biom_json_int.py
+./tsv_to_biom_json_int.py 16s_OTU_table.tsv 16s_OTU_table.json.biom
+
+#change env
+conda activate frogs_env
+
+#frogs remove_chimera
+
+remove_chimera.py \
+  --input-fasta centroids.fasta \
+  --input-biom 16s_OTU_table.json.biom \
+  --output-fasta centroids_without_chim_frogs.fasta \
+  --output-biom 16s_OTU_table_without_chim.biom
+
+#good env
+conda activate drosobiome2025
+
+#chimera stat
+python3 chimera_removal_stats.py centroids.fasta centroids_without_chim_frogs.fasta 16s_OTU_table.tsv
+
+#come back to conversion environment
+conda activate biom_env
+
+#convert the Biom output of frogs into tsv OTU_table
+python3 biom_to_tsv.py 16s_OTU_table_without_chim.biom
+
+#change of environment
+conda activate drosobiome2025
+
+#creat the database repertory
+mkdir db 
+
+#import SILVA_1seqBYtax.fasta in db
+
+#make the blast data base
+makeblastdb -in db/SILVA_1seqBYtax.fasta -dbtype nucl -parse_seqids -out db/SILVA_1seqBYtax
+
+
+#creat taxonomy file
+awk '
+BEGIN{
+  OFS="\t"
+  split("kingdom phylum class order family genus species", R, " ")
+}
+/^>/{
+  h = substr($0,2)
+
+  id = h
+  sub(/[ \t].*/,"",id)
+
+  tax = h
+  sub(/^[^ \t]+[ \t]+/,"",tax)
+  if(tax == h) next
+
+  n = split(tax, A, ";")
+
+  out = ""
+  k = 0
+  for(i=1; i<=n; i++){
+    t = A[i]
+    gsub(/^[ \t]+|[ \t]+$/, "", t)     # trim
+    if(t == "") continue
+
+    # si le niveau est déjà "rank:taxon", on garde seulement la partie taxon
+    if(index(t, ":") > 0){
+      sub(/^[^:]*:/, "", t)
+      gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if(t == "") continue
+    }
+
+    k++
+    if(k > length(R)) break
+    if(out != "") out = out ";"
+    out = out R[k] ":" t
+  }
+
+  if(out != "") print id, out
+}' db/SILVA_1seqBYtax.fasta > db/SILVA_1seqBYtax.BLCA.taxonomy
+
+
+
+
+#Run BLCA for taxonomic affiliation
+python3 ~/tools/BLCA/2.blca_main.py \
+  -i centroids_without_chim_frogs.fasta \
+  -q db/SILVA_1seqBYtax \
+  -r db/SILVA_1seqBYtax.BLCA.taxonomy \
+  --iset 85 \
+  -c 0.80 \
+  -o centroids.SILVA.blca.out \
+  -p 80
+
+#Visualizing results
+less centroids.SILVA.blca.out
+
+#Setting the confidence threshold to 0.8 and generating the tax_table
+python3 blca_to_phyloseq_tax_table.py \
+  --in centroids.SILVA.blca.out \
+  --out 16s_tax_table.tsv \
+  --threshold 0.8
+
+#Add kingdom information
+python3 find_kingdom.py
+
+# realign consensuses with reorientation (reorientation normally not needed)
+mafft --reorder --adjustdirection centroids_without_chim_frogs.fasta > centroids_without_chim_frogs.afa
+
+# tree with the whole alignment (version 2.1.11)
+fasttree -nt -gtr centroids_without_chim_frogs.afa > centroids.tre
+
