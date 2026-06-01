@@ -1,0 +1,41 @@
+#!/bin/bash
+
+mapping_file="OL4_PCR_plate_plan_Primer_Association.tsv"
+
+for file in ITS_*.fastq.gz; do
+
+    sample=$(basename "$file" .fastq.gz)
+    sample=${sample#ITS_}
+
+    primer_assoc=$(awk -F'\t' -v sample="$sample" '$2 == sample {print $1}' "$mapping_file")
+
+    if [ -z "$primer_assoc" ]; then
+        echo "[WARNING] No primer association found for $sample"
+        continue
+    fi
+
+    F=$(echo "$primer_assoc" | cut -d'-' -f1)
+    R=$(echo "$primer_assoc" | cut -d'-' -f2)
+
+    output="Mbiome_OL4_decompressed.fastq_FILT_iOL4_${F}iOL4_${R}_SP.fastq"
+
+    echo "$file -> $output"
+
+    gunzip -c "$file" > "$output"
+
+done
+
+#Activate environement
+conda activate drosobiome2025
+
+#we keep only sequence with more than 80% of clean bases
+python3 run_quality_filter_on_raw.py --jobs 4
+
+#Go to the new repertory
+cd cleaned_seq2
+
+#visualize filtering stat
+less quality_filter_stats.tsv
+
+#rename file with sample name
+python3 rename_cleaned_fastq_and_annotate_stats.py
