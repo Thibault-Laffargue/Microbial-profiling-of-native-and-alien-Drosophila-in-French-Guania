@@ -1,0 +1,871 @@
+---
+title: "Control+Phyloseq"
+author: "T.Laffargue"
+date: "2025-05-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#ggplot2
+install.packages("ggplot2")
+
+#phytools
+install.packages("ape")
+install.packages("mnormt") #don't forgot to answer no at the question.
+install.packages("expm")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Biostrings")
+install.packages("remotes")
+library(remotes)
+remotes::install_github("KlausVigo/phangorn")
+install.packages("phytools")
+
+#dplyr
+install.packages("dplyr")
+
+#ranacapa
+BiocManager::install("multtest")
+if (!requireNamespace("devtools", quietly = TRUE))
+      install.packages('devtools')
+library(devtools)
+devtools::install_github("gauravsk/ranacapa")
+
+#gridExtra
+install.packages("gridExtra")
+
+#vegan
+install.packages("vegan")
+
+#usedist
+install.packages("usedist")
+
+#breakaway
+install.packages("breakaway")
+
+#magrittr
+install.packages("magrittr")
+
+#tidyverse
+install.packages("tidyverse")
+
+#DESeq2
+BiocManager::install("DESeq2")
+
+#PMCMRplus
+install.packages("PMCMRplus")
+
+#openxlsx
+install.packages("openxlsx")
+
+#rstatix
+install.packages("rstatix")
+
+#reshape2
+install.packages("reshape2")
+
+####### Library ######
+
+library(phyloseq)
+library(ggplot2)
+library(phytools)
+library(dplyr)
+library(ranacapa)
+library(gridExtra)
+library(vegan)
+library(usedist)
+library(openxlsx)
+
+library(breakaway)
+library(magrittr)
+library(tidyverse)
+library(DESeq2)
+library(PMCMRplus)
+library(rstatix)
+library(reshape2)
+library(patchwork)
+library(RColorBrewer)
+library(ape)
+library(readxl)
+
+####### Setup dataset ######
+# Folders, Themes, colors
+source("prelude.R")
+
+# Setting up directories
+data_dir <-data_dir_path
+output_dir <- output_dir_path
+
+# =========================================================
+#  Utils: accumulate "filtered-out" samples into one RDS
+# =========================================================
+
+init_filtered_out <- function(file = "filtered_out.rds") {
+  if (!file.exists(file)) {
+    saveRDS(NULL, file)
+  }
+}
+
+append_filtered_out <- function(ps_removed, file = "filtered_out.rds") {
+  # ps_removed: phyloseq object containing ONLY samples you want to store
+  if (is.null(ps_removed) || nsamples(ps_removed) == 0) return(invisible(NULL))
+
+  old <- if (file.exists(file)) readRDS(file) else NULL
+
+  if (is.null(old)) {
+    new <- ps_removed
+  } else {
+    # Merge (keep all taxa encountered in removed samples)
+    new <- merge_phyloseq(old, ps_removed)
+
+    # Ensure unique sample names (extra-safe)
+    sn <- sample_names(new)
+    if (any(duplicated(sn))) {
+      sample_names(new) <- make.unique(sn)
+    }
+  }
+
+  saveRDS(new, file)
+  invisible(NULL)
+}
+
+# Helper: given ps_before and ps_after, get removed samples phyloseq
+get_removed_samples <- function(ps_before, ps_after) {
+  removed_names <- setdiff(sample_names(ps_before), sample_names(ps_after))
+  if (length(removed_names) == 0) return(NULL)
+  prune_samples(removed_names, ps_before)
+}
+
+##################################################################################################################
+########################################### Controls #############################################################
+##################################################################################################################
+
+process_controls <- function(comm_file, meta_file, tax_file, prefix, D6310_expected_species) {
+  library(tidyverse)
+  library(phyloseq)
+
+  message("🔍 Traitement des données : ", prefix)
+
+  # 1. upload file
+  comm <- read.table(comm_file, header = TRUE, row.names = 1, sep = "\t")
+  metadata <- read.csv(meta_file, sep = ";", header = TRUE, row.names = 1)
+  taxmat <- as.matrix(read.csv(tax_file, sep = "\t", header = TRUE, row.names = 1))
+  
+  # name harmonization
+  colnames(comm) <- dplyr::recode(
+    colnames(comm),
+    "DNA_RNA_Shield" = "DNA.RNA.Shield",
+    "negative"       = "X."
+  )
+
+  # 2. select controls
+  control_samples <- c("X.", "D6310", "DNA.RNA.Shield")
+  metadata_control <- metadata %>% filter(Sample_ID %in% control_samples)
+
+  if (nrow(metadata_control) == 0) {
+    message("⚠️ Aucun contrôle trouvé pour ", prefix)
+    return(data.frame())
+  }
+
+  OTU  <- otu_table(comm, taxa_are_rows = TRUE)
+  TAX  <- tax_table(taxmat)
+  SAMP <- sample_data(metadata_control)
+
+  # Phyloseq at OTU level, no tax_glom
+  physeq_ini <- merge_phyloseq(OTU, TAX, SAMP)
+
+  # Prepare complete tax_table
+  tax_df_full <- as.data.frame(tax_table(physeq_ini)) %>%
+    rownames_to_column("OTU")
+
+  # 3. expected family in D6310 (from expected species)
+  expected_families <- tax_df_full %>%
+    filter(Species %in% D6310_expected_species) %>%
+    distinct(Family) %>%
+    pull(Family)
+
+  message("   ✅ Familles attendues pour D6310 : ",
+          paste(unique(expected_families), collapse = ", "))
+
+  # 4. Extraction function at OTU level
+  extract_problematic <- function(physeq_obj, sample_name,
+                                  expected_species = NULL,
+                                  expected_families = NULL) {
+    if (!(sample_name %in% sample_names(physeq_obj))) return(data.frame())
+
+    otu_df <- as.data.frame(otu_table(physeq_obj))
+    tax_df <- as.data.frame(tax_table(physeq_obj)) %>%
+      rownames_to_column("OTU")
+
+    # keep only controls column + OTUs with >= 10 reads
+    df <- otu_df %>%
+      select(all_of(sample_name)) %>%
+      filter(.data[[sample_name]] >= 10) %>%
+      rownames_to_column("OTU") %>%
+      left_join(tax_df, by = "OTU")
+
+    # filter out expected
+    if (!is.null(expected_families)) {
+      df <- df %>% filter(!(Family %in% expected_families))
+    } else if (!is.null(expected_species)) {
+      df <- df %>% filter(!(Species %in% expected_species))
+    }
+
+    if (nrow(df) == 0) return(data.frame())
+
+    df %>%
+      transmute(
+        OTU,
+        Species,
+        Reads_number = .data[[sample_name]],
+        Control = sample_name
+      )
+  }
+
+  # 5. Extraction for each control
+  problem_D6310  <- extract_problematic(physeq_ini, "D6310",
+                                        expected_families = expected_families)
+  problem_Water  <- extract_problematic(physeq_ini, "X.")
+  problem_Shield <- extract_problematic(physeq_ini, "DNA.RNA.Shield")
+
+  # 6. Merge control table
+  all_problems <- bind_rows(problem_D6310, problem_Water, problem_Shield)
+
+  if (nrow(all_problems) == 0) {
+    message("✅ Aucun OTU problématique final détecté dans ", prefix)
+    return(data.frame())
+  }
+
+  # 7. For each OTU, keep the control where it is the most abundant
+  result <- all_problems %>%
+    group_by(OTU, Species) %>%   # unique OTU, Keep Species as info
+    slice_max(order_by = Reads_number, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    select(OTU, Species, Reads_number)
+
+  # 8. Export CSV
+  write.csv(result, paste0("Problematic_OTUs_", prefix, ".csv"), row.names = FALSE)
+  message("📁 Résultat enregistré : Problematic_OTUs_", prefix, ".csv")
+
+  return(result)
+}
+
+
+
+
+# ===============================
+#     Specific parameters
+# ===============================
+
+# Expected species in D6310
+D6310_standard_16s <- c(
+  "Bacillus subtilis", "Listeria monocytogenes", "Staphylococcus aureus",
+  "Enterococcus faecalis", "Lactobacillus fermentum", "Salmonella enterica",
+  "Escherichia coli", "Pseudomonas aeruginosa"
+)
+
+D6310_standard_OL4 <- c(
+  D6310_standard_16s,
+  "Saccharomyces cerevisiae"  # For ITS
+)
+
+# ===============================
+#     Apply
+# ===============================
+
+Problematic_otu_16s <- process_controls(
+  comm_file = "16s_OTU_table_without_chim.tsv",
+  meta_file = "16s_metadata.csv",
+  tax_file = "16s_tax_table_without_chim.tsv",
+  prefix = "16S",
+  D6310_expected_species = D6310_standard_16s
+)
+
+
+Problematic_otu_OL4 <- process_controls(
+  comm_file = "OL4_OTU_table_without_chim.tsv",
+  meta_file = "OL4_metadata.csv",
+  tax_file = "OL4_tax_table_without_chim.tsv",
+  prefix = "OL4",
+  D6310_expected_species = D6310_standard_OL4
+)
+
+################################################################################################################
+######################################### Preliminary Phyloseq #################################################
+################################################################################################################
+
+process_dataset <- function(prefix, otu_file, meta_file, tax_file, contaminated_file) {
+  message("🔧 Traitement : ", prefix)
+
+  # ----- 1. Importation -----
+  comm <- read.table(otu_file, header = TRUE, row.names = 1, sep = "\t")
+  metadata <- read.csv(meta_file, sep = ";", header = TRUE, row.names = 1)
+  metadata$HostSpecies <- dplyr::recode(
+    metadata$HostSpecies,
+    "D. willistoni" = "Willistoni sp."
+  )
+  taxmat <- as.matrix(read.csv(tax_file, sep = "\t", header = TRUE, row.names = 1))
+  
+  # control names Harmonization
+  colnames(comm) <- dplyr::recode(
+    colnames(comm),
+    "DNA_RNA_Shield" = "DNA.RNA.Shield",
+    "negative"       = "X."
+  )
+
+  # ----- 2. Delete controls -----
+  control_names <- c("X.", "D6310", "DNA.RNA.Shield")
+  metadata <- metadata[!(rownames(metadata) %in% control_names), ]
+  comm <- comm[, !(colnames(comm) %in% control_names)]
+
+  # ----- 3. clean column -----
+  colnames(comm) <- gsub("([a-z])([0-9])", "\\1_\\2", colnames(comm))
+  colnames(comm) <- tolower(colnames(comm))
+
+  # ----- 4. delete contaminated pools -----
+  contaminated_pools <- read_excel(contaminated_file)
+  View(contaminated_pools)
+  contaminated_pool <- unique(contaminated_pools$Pool)
+  metadata <- metadata[!(rownames(metadata) %in% contaminated_pool), ]
+  comm <- comm[, !(colnames(comm) %in% contaminated_pool)]
+
+  # Synchronization
+  metadata <- metadata[rownames(metadata) %in% colnames(comm), ]
+  comm <- comm[, colnames(comm) %in% rownames(metadata)]
+
+  # ----- 5. Effective table -----
+  effectif_locality <- metadata %>%
+    group_by(Locality, HostSpecies) %>%
+    summarise(count = n(), .groups = "drop")
+
+  effectif_global <- metadata %>%
+    group_by(HostSpecies) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    mutate(Locality = "All Locality")
+
+  effectif_table <- bind_rows(effectif_locality, effectif_global)
+  write.csv(effectif_table, paste0("Effectif_table_", prefix, ".csv"), row.names = FALSE)
+
+  # ----- 6. Graphic -----
+  g <- ggplot(effectif_table, aes(x = HostSpecies, y = count)) +
+    geom_bar(stat = "identity", position = position_dodge()) +
+    facet_grid(. ~ Locality) +
+    theme_minimal() +
+    theme(strip.text = element_text(size = 25),
+          axis.title.y = element_blank(),
+          axis.text.x = element_text(size = 20),
+          axis.text.y = element_text(size = 25),
+          axis.title = element_text(size = 25),
+          title = element_text(size = 40, face = "bold")) +
+    labs(x = "Species", y = "Number of samples", title = "Number of pools by species and locality") +
+    geom_text(aes(label = count), color = "white", hjust = 1.1, size = 5, vjust = 0.5) +
+    coord_flip()
+
+  ggsave(filename = paste0("Number_of_pools_", prefix, ".pdf"), plot = g, width = 18, height = 11)
+
+  # ----- 7. create phyloseq object -----
+  OTU <- otu_table(comm, taxa_are_rows = TRUE)
+  TAX <- tax_table(taxmat)
+  SAMP <- sample_data(metadata)
+  physeq_ini <- merge_phyloseq(OTU, SAMP, TAX)
+
+  # ----- 8. count "unknown species" -----
+  physeq_tax_table <- as.data.frame(tax_table(physeq_ini))
+  num_unknown_species <- sum(physeq_tax_table$Species == "Unknown")
+  message("🔍 ", num_unknown_species, " OTUs annotés comme 'unknown_species'")
+
+  # ----- 9. species merging -----
+  #physeq_ini_rs <- tax_glom(physeq_ini, taxrank = "Species")
+
+  # ----- 10. Save -----
+  #saveRDS(physeq_ini_rs, paste0("DROSO", prefix, "_Rs_physeq.Rs"))
+  #write.csv(as.data.frame(tax_table(physeq_ini_rs)), paste0("Taxonomy_concat_", prefix, ".csv"))
+
+  #return(physeq_ini_rs)
+  
+  # ----- 10. Sauve without species merged -----
+  saveRDS(physeq_ini, paste0("DROSO", prefix, "_Rs_physeq.Rs"))
+  write.csv(as.data.frame(tax_table(physeq_ini)), paste0("Taxonomy_concat_", prefix, ".csv"))
+
+  return(physeq_ini)
+}
+
+# === Apply ===
+physeq_16s <- process_dataset(
+  prefix = "16S",
+  otu_file = "16s_OTU_table_without_chim.tsv",
+  meta_file = "16s_metadata.csv",
+  tax_file = "16s_tax_table_without_chim.tsv",
+  contaminated_file = "Miss_identify_sample.xlsx"
+)
+
+physeq_ol4 <- process_dataset(
+  prefix = "OL4",
+  otu_file = "OL4_OTU_table_without_chim.tsv",
+  meta_file = "OL4_metadata.csv",
+  tax_file = "OL4_tax_table_without_chim.tsv",
+  contaminated_file = "Miss_identify_sample.xlsx"
+)
+
+################################################################################################################
+######################################### Cleaned Phyloseq #####################################################
+################################################################################################################
+
+process_phyloseq_original <- function(prefix, physeq_file, problematic_file, is_fungal = FALSE, depth_threshold = 1000,
+                                     filtered_out_file = paste0("filtered_out_", prefix, ".rds")) {
+
+  message("🚀 Pipeline (original) : ", prefix)
+
+  # Init the per-dataset accumulating RDS (once per call)
+  init_filtered_out(filtered_out_file)
+
+  # 1. upload phyloseq
+  physeq.ini.Rs <- readRDS(physeq_file)
+  Problematic_otu <- read.csv(problematic_file)
+
+  # --- clean "Incertae Sedis sp. X" in tax_table --- #
+  tax_ini <- as.data.frame(tax_table(physeq.ini.Rs))
+
+  if ("Species" %in% colnames(tax_ini)) {
+
+    # Order tax_table column
+    rank_cols <- intersect(
+      c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"),
+      colnames(tax_ini)
+    )
+
+    # Line where species format is "Incertae Sedis sp. X"
+    inc_rows <- which(grepl("^Incertae\\s+Sedis\\s+sp\\.", tax_ini$Species, ignore.case = TRUE))
+
+    if (length(inc_rows) > 0) {
+      message("   ⚠️ Found ", length(inc_rows),
+              " 'Incertae Sedis sp. X' entries in Species. Relabelling (no numbering)...")
+
+      for (i in inc_rows) {
+        ranks_vals <- tax_ini[i, rank_cols, drop = FALSE]
+
+        # last clean taxonomic rank:
+        ok_idx <- which(
+          !is.na(ranks_vals[1, ]) &
+            ranks_vals[1, ] != "" &
+            !grepl("incertae\\s+sedis", ranks_vals[1, ], ignore.case = TRUE) &
+            names(ranks_vals) != "Species"
+        )
+
+        if (!length(ok_idx)) {
+          # if nothing is clean before Species → "Unknown Species"
+          tax_ini$Species[i] <- "Unknown Species"
+          next
+        }
+
+        last_ok_pos <- max(ok_idx)
+        base_name   <- as.character(ranks_vals[1, last_ok_pos])
+
+        # build "X sp." for each taxonomic rank under the last clean one
+        lower_cols <- rank_cols[(last_ok_pos + 1):length(rank_cols)]
+        lower_cols <- lower_cols[!is.na(lower_cols)]  # security
+
+        if (length(lower_cols) > 0) {
+          for (col in lower_cols) {
+            tax_ini[i, col] <- paste0(base_name, " sp.")
+          }
+        }
+      }
+
+      # adding cleaned tax_table too phyloseq
+      tax_table(physeq.ini.Rs) <- tax_table(as.matrix(tax_ini))
+    }
+  }
+
+  # little check on Unknown
+  tax_ini <- as.data.frame(tax_table(physeq.ini.Rs))
+  if ("Species" %in% colnames(tax_ini)) {
+    message("   🔍 Unknown Species initiaux : ",
+            sum(grepl("unknown", tax_ini$Species, ignore.case = TRUE), na.rm = TRUE))
+  }
+
+  # 2. Subset Category
+  subset_category <- subset_samples(physeq.ini.Rs, Category %in% c("Native", "Invasive"))
+  message("🧃 Après subset Category (Native/Invasive): ", nsamples(subset_category),
+          " samples, ", ntaxa(subset_category), " taxa")
+
+  # 3. filtering on Prevalence
+  prev0 <- apply(otu_table(subset_category),
+                 MARGIN = ifelse(taxa_are_rows(subset_category), 1, 2),
+                 FUN = function(x) sum(x > 0))
+  ps1 <- prune_taxa(prev0 >= 1, subset_category)
+  message("🍂 Après prune_taxa (prevalence >=1): ", nsamples(ps1),
+          " samples, ", ntaxa(ps1), " taxa")
+
+  # 3b. Prune phyla badly represented
+  taxdf <- as.data.frame(tax_table(ps1))
+  phylum_counts <- table(taxdf$Phylum)
+  message("   📊 Nombre de taxa par phylum :")
+  print(phylum_counts)
+
+  keepPhyla <- names(phylum_counts[phylum_counts >= 2])
+  message("   ✅ Phyla gardés (>=2 taxa): ", paste(keepPhyla, collapse = ", "))
+
+  taxa_to_keep <- rownames(taxdf)[taxdf$Phylum %in% keepPhyla]
+  ps2 <- prune_taxa(taxa_to_keep, ps1)
+  message("🧬 Après prune des phylums peu représentés: ", nsamples(ps2),
+          " samples, ", ntaxa(ps2), " taxa")
+
+  # 4. Delete spikes / Cyanobacteria / Fungi parasites
+  if (is_fungal) {
+    taxmat <- as.data.frame(tax_table(ps2))
+    spikes_OTU <- rownames(taxmat)[ !(taxmat$Kingdom %in% c("Fungi", "Unknown Kingdom")) ]
+    message("   🌋 Branch FUNGAL : spikes_OTU = ", length(spikes_OTU))
+  } else {
+    spikes_OTU <- c("FJ347755.1.1431","AJJU01000016.421.1936","CP002049.86621.88117","LN563868.1.1345",
+                    "JN032373.1.1387","JN032376.1.1402","LWDA01001123.84979.86326",
+                    "GEEO01017285.65.1522", "GEEO01017289.65.1399")
+    message("   🌋 Branch BACTERIAL : spikes standards = ", length(spikes_OTU))
+  }
+
+  #------------------------------------------------------------------------------------------------------#
+  otu_mat <- as.data.frame(otu_table(ps2))
+  if (!taxa_are_rows(ps2)) {
+    otu_mat <- t(otu_mat)
+  }
+
+  spikes_present <- intersect(rownames(otu_mat), spikes_OTU)
+  message("   🔥 Spikes présents dans ps2 : ", length(spikes_present))
+
+  spikes_reads <- colSums(otu_mat[spikes_present, , drop = FALSE])
+  total_reads <- colSums(otu_mat)
+
+  contamination_table <- data.frame(
+    Sample = names(total_reads),
+    Spike_Reads = spikes_reads[names(total_reads)],
+    Total_Reads = total_reads,
+    Percent_Contamination = round(100 * spikes_reads[names(total_reads)] / total_reads, 2)
+  )
+
+  contamination_table$Spike_Reads[is.na(contamination_table$Spike_Reads)] <- 0
+  contamination_table$Percent_Contamination[is.na(contamination_table$Percent_Contamination)] <- 0
+
+  # Delete spikes
+  Taxa2keep <- setdiff(taxa_names(ps2), spikes_OTU)
+  ps2k <- prune_taxa(Taxa2keep, ps2)
+  message("🚫 Après suppression spikes: ", nsamples(ps2k),
+          " samples, ", ntaxa(ps2k), " taxa")
+
+  # 5. Delete sample with low read depth
+  subset_samples <- prune_samples(sample_sums(ps2k) >= depth_threshold, ps2k)
+
+  # --- store removed (low-depth) samples ---
+  removed_ps <- get_removed_samples(ps2k, subset_samples)
+  append_filtered_out(removed_ps, filtered_out_file)
+
+  message("⚖️ Après filtre profondeur >= ", depth_threshold, ": ",
+          nsamples(subset_samples), " samples, ", ntaxa(subset_samples), " taxa")
+
+  # 6. correct contamination
+  otu_table_extracted <- as.data.frame(otu_table(subset_samples))
+
+  # check if OTUs are well in line
+  if (!taxa_are_rows(subset_samples)) {
+    otu_table_extracted <- t(otu_table_extracted)
+  }
+
+  # Vminimal check : does Problematic_otu contain "OTU" column
+  if (!"OTU" %in% colnames(Problematic_otu)) {
+    stop("❌ La table 'Problematic_otu' doit contenir une colonne 'OTU'.")
+  }
+  if (!"Reads_number" %in% colnames(Problematic_otu)) {
+    stop("❌ La table 'Problematic_otu' doit contenir une colonne 'Reads_number'.")
+  }
+
+  # correction OTU by OTU
+  for (i in seq_len(nrow(Problematic_otu))) {
+    otu_id <- Problematic_otu$OTU[i]
+    value_to_subtract <- Problematic_otu$Reads_number[i]
+
+    if (otu_id %in% rownames(otu_table_extracted)) {
+      otu_table_extracted[otu_id, ] <- pmax(
+        otu_table_extracted[otu_id, ] - value_to_subtract,
+        0
+      )
+    }
+  }
+
+  # Add cleaned otu_table to phyloseq
+  otu_table(subset_samples) <- otu_table(otu_table_extracted, taxa_are_rows = TRUE)
+  message("🧹 Après correction contamination (même n): ",
+          nsamples(subset_samples), " samples, ", ntaxa(subset_samples), " taxa")
+
+  # 6b. clean tax_table
+  taxmat <- as.data.frame(tax_table(subset_samples))
+
+  if ("Species" %in% colnames(taxmat)) {
+
+    # 6b-1) little cleaning
+    taxmat$Species <- gsub("^uncultured\\s+", "", taxmat$Species)            # delete "uncultured " au début
+    taxmat$Species <- gsub("\\s+BRTC-3$", "", taxmat$Species)                # delete suffixe " BRTC-3"
+    taxmat$Species <- gsub("\\s+ATCC\\s+33386$", "", taxmat$Species)         # delete suffixe " ATCC 33386"
+    taxmat$Species <- trimws(taxmat$Species)
+
+    # 6b-3) gave unique identifiers to "Unknown Species"
+    idx_unknown <- which(!is.na(taxmat$Species) & taxmat$Species == "Unknown Species")
+    if (length(idx_unknown) > 0) {
+      taxmat$Species[idx_unknown] <- paste0("Unknown Species_", seq_along(idx_unknown))
+    }
+
+    # add cleaned tax_table to phyloseq
+    tax_table(subset_samples) <- tax_table(as.matrix(taxmat))
+
+    message("🏷️ tax_table nettoyée: Unknown Species renommés = ", length(idx_unknown))
+  }
+
+  # 7. Work on proportion
+  hilu <- filter_taxa(subset_samples, function(x) sum(x >= 2) >= 2, TRUE)
+  message("   📉 Après filter_taxa(sum(x >= 2) >= 2): ",
+          nsamples(hilu), " samples, ", ntaxa(hilu), " taxa")
+
+  hilu.f <- prune_samples(sample_sums(hilu) >= 2, hilu)
+
+  # --- store removed (too few reads after filtering taxa) samples ---
+  removed_ps2 <- get_removed_samples(hilu, hilu.f)
+  append_filtered_out(removed_ps2, filtered_out_file)
+
+  message("🧮 Après prune_samples(sample_sums(hilu) >= 2): ",
+          nsamples(hilu.f), " samples, ", ntaxa(hilu.f), " taxa")
+
+  # Verify number of Unknown Species at the end
+  tax_final <- as.data.frame(tax_table(hilu.f))
+  if ("Species" %in% colnames(tax_final)) {
+    message("   🔍 Unknown Species finaux : ",
+            sum(grepl("unknown", tax_final$Species, ignore.case = TRUE), na.rm = TRUE))
+  }
+
+  # 8. Save
+  saveRDS(hilu.f, paste0("Clean_phyloseq_", prefix, ".rds"))
+
+  # 9. Resume
+  otu_table_temp <- data.frame(otu_table(hilu.f))
+  column_sums <- colSums(otu_table_temp)
+  message("🔍 MIN: ", min(column_sums),
+          " | MAX: ", max(column_sums),
+          " | TOTAL: ", sum(column_sums))
+
+  # 10. effective
+  metadata <- as.data.frame(sample_data(hilu.f))
+  effectif_locality <- metadata %>%
+    group_by(Locality, HostSpecies) %>%
+    summarise(count = n(), .groups = "drop")
+
+  effectif_global <- metadata %>%
+    group_by(HostSpecies) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    mutate(Locality = "All Locality")
+
+  effectif_table <- bind_rows(effectif_locality, effectif_global)
+  write.csv(effectif_table, paste0("Effectif_table_filtered_", prefix, ".csv"), row.names = FALSE)
+
+  g <- ggplot(effectif_table, aes(x = HostSpecies, y = count)) +
+    geom_bar(stat = "identity", position = position_dodge()) +
+    facet_grid(. ~ Locality) +
+    theme_minimal() +
+    theme(strip.text = element_text(size = 25),
+          axis.title.y = element_blank(),
+          axis.text.x = element_text(size = 20),
+          axis.text.y = element_text(size = 25),
+          axis.title = element_text(size = 25),
+          title = element_text(size = 40, face = "bold")) +
+    labs(x = "Species", y = "Number of samples", title = "Number of pools by species and locality") +
+    geom_text(aes(label = count), color = "white", hjust = 1.1, size = 5, vjust = 0.5) +
+    coord_flip()
+
+  ggsave(filename = paste0("Number_of_pools_filtered_", prefix, ".pdf"),
+         plot = g, width = 18, height = 11)
+
+  return(hilu.f)
+}
+
+
+
+# === Apply ===
+
+physeq_16s_clean <- process_phyloseq_original(
+  prefix = "16S",
+  physeq_file = "DROSO16S_Rs_physeq.Rs",
+  problematic_file = "Problematic_OTUs_16S.csv",
+  is_fungal = FALSE,
+  filtered_out_file = "filtered_out_16S.rds"
+)
+
+physeq_ol4_clean <- process_phyloseq_original(
+  prefix = "OL4",
+  physeq_file = "DROSOOL4_Rs_physeq.Rs",
+  problematic_file = "Problematic_OTUs_OL4.csv",
+  is_fungal = TRUE,
+  depth_threshold = 250,
+  filtered_out_file = "filtered_out_OL4.rds"
+)
+
+##########################################################################################
+################################### Some raw info #######################################
+########################################################################################
+
+physeq_16s_clean #General information
+
+physeq_16s_clean_native <- subset_samples(physeq_16s_clean, Category %in% c("Native")) #Phyloseq Object for native
+physeq_16s_clean_native <- prune_taxa(taxa_sums(physeq_16s_clean_native) > 0, physeq_16s_clean_native) #Deleting absent OTU
+physeq_16s_clean_native #General information native
+
+
+physeq_16s_clean_invasive <- subset_samples(physeq_16s_clean, Category %in% c("Invasive")) #Phyloseq Object for inavsive
+physeq_16s_clean_invasive <- prune_taxa(taxa_sums(physeq_16s_clean_invasive) > 0, physeq_16s_clean_invasive) #Deleting absent OTU
+physeq_16s_clean_invasive #General information invasive
+
+
+Shared_16s <- intersect(unique(row.names(physeq_16s_clean_native@otu_table)), unique(row.names(physeq_16s_clean_invasive@otu_table)))
+length(Shared_16s)
+
+physeq_ol4_clean #General information
+
+
+physeq_ol4_clean_native <- subset_samples(physeq_ol4_clean, Category %in% c("Native")) #Phyloseq Object for native
+physeq_ol4_clean_native <- prune_taxa(taxa_sums(physeq_ol4_clean_native) > 0, physeq_ol4_clean_native) #Deleting absent OTU
+physeq_ol4_clean_native #General information native
+
+
+physeq_ol4_clean_invasive <- subset_samples(physeq_ol4_clean, Category %in% c("Invasive")) #Phyloseq Object for inavsive
+physeq_ol4_clean_invasive <- prune_taxa(taxa_sums(physeq_ol4_clean_invasive) > 0, physeq_ol4_clean_invasive) #Deleting absent OTU
+physeq_ol4_clean_invasive #General information invasive
+
+
+Shared_ol4 <- intersect(unique(row.names(physeq_ol4_clean_native@otu_table)), unique(row.names(physeq_ol4_clean_invasive@otu_table)))
+length(Shared_ol4)
+
+####################################################################################
+############################### Add tree ###########################################
+###################################################################################
+
+Add_phylogeny <- function(prefix, physeq_file, Tree_file) {
+
+  message("🚀 Ajout de la phylogénie : ", prefix)
+
+  # 1. upload cleaned phyloseq
+  physeq_clean <- readRDS(physeq_file)
+  message("📊 N samples : ", nsamples(physeq_clean))
+  message("📊 N taxa avant arbre : ", ntaxa(physeq_clean))
+
+  # 2. upload tree
+  message("🌳 Lecture de l'arbre depuis : ", Tree_file)
+  tree_raw <- ape::read.tree(Tree_file)
+  message("🌿 N tips dans l'arbre brut : ", length(tree_raw$tip.label))
+
+  # 3. tree and phyloseq names HarmoniZation
+  taxa_physeq <- taxa_names(physeq_clean)
+
+  # --- Correct tree lables : Delete "_R_" prefix---
+  taxa_tree_raw <- tree_raw$tip.label
+  message("🧾 Exemple labels arbre AVANT nettoyage :")
+  print(head(taxa_tree_raw, 10))
+
+  # Delete "_R_" prefix
+  taxa_tree_clean <- gsub("^_R_", "", taxa_tree_raw)
+
+  # add cleaned labels to the tree
+  tree_raw$tip.label <- taxa_tree_clean
+
+  message("🧾 Exemple labels arbre APRÈS nettoyage :")
+  print(head(tree_raw$tip.label, 10))
+
+  # Debug : compare names sets
+  taxa_in_physeq_not_in_tree <- setdiff(taxa_physeq, tree_raw$tip.label)
+  taxa_in_tree_not_in_physeq <- setdiff(tree_raw$tip.label, taxa_physeq)
+
+  message("❗ Taxa dans phyloseq mais PAS dans l'arbre (après nettoyage) : ",
+          length(taxa_in_physeq_not_in_tree))
+  message("   Exemple (jusqu'à 20) :")
+  print(head(taxa_in_physeq_not_in_tree, 20))
+
+  message("❗ Taxa dans l'arbre mais PAS dans phyloseq (après nettoyage) : ",
+          length(taxa_in_tree_not_in_physeq))
+  message("   Exemple (jusqu'à 20) :")
+  print(head(taxa_in_tree_not_in_physeq, 20))
+
+  # Intersection after cleaning
+  taxa_communs <- intersect(taxa_physeq, tree_raw$tip.label)
+  message("🔗 Taxa en commun entre phyloseq et arbre (après nettoyage) : ",
+          length(taxa_communs))
+
+  if (length(taxa_communs) == 0) {
+    stop("❌ Aucun taxon en commun entre l'arbre et l'objet phyloseq. Vérifie les noms (OTU IDs) !")
+  }
+
+  # 4. Keep only taxa common to the tree and the phyloseq
+  # If all phyloseq taxa are in the tree (expected), ntaxa don't change.
+  tree_pruned   <- ape::keep.tip(tree_raw, taxa_communs)
+  physeq_pruned <- prune_taxa(taxa_communs, physeq_clean)
+
+  message("📉 N taxa après harmonisation : ", ntaxa(physeq_pruned))
+  message("🌿 N tips dans l'arbre pruned : ", length(tree_pruned$tip.label))
+
+  # 5. add the tree to phyloseq
+  physeq_with_tree <- merge_phyloseq(
+    physeq_pruned,
+    phy_tree(tree_pruned)
+  )
+
+  # 6. Save
+  output_file <- paste0("Phyloseq_with_tree_", prefix, ".rds")
+  saveRDS(physeq_with_tree, output_file)
+  message("💾 Objet sauvegardé sous : ", output_file)
+
+  return(physeq_with_tree)
+}
+
+
+
+
+# === Apply ===
+
+physeq_16s_with_tree <- Add_phylogeny(
+  prefix      = "16S",
+  physeq_file = "Clean_phyloseq_16S.rds",
+  Tree_file   = "centroids.tre"
+)
+
+
+
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
