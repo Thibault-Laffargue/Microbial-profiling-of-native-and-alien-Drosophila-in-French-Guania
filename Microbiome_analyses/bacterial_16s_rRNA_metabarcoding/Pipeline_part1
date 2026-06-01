@@ -1,0 +1,52 @@
+#!/bin/bash
+#Conversion from available file too ready for pipeline file.
+
+mapping_file="16s_PCR_plate_plan_Primer_Association.fixed"
+
+for file in 16s_Pool*.fastq.gz; do
+    pool=$(basename "$file" .fastq.gz)
+    pool=${pool#16s_}
+
+    primer_assoc=$(awk -v pool="$pool" '$2 == pool {print $1}' "$mapping_file")
+
+    if [ -z "$primer_assoc" ]; then
+        echo "[WARNING] No primer association found for $pool"
+        continue
+    fi
+
+    F=$(echo "$primer_assoc" | cut -d'-' -f1)
+    R=$(echo "$primer_assoc" | cut -d'-' -f2)
+
+    output="Mbiome_16s__FILT_iBact_${F}iBact_${R}_SP.fastq"
+
+    echo "$file -> $output"
+
+    gunzip -c "$file" > "$output"
+done
+
+
+#rename file containing 1 problematic sequence in order to save the originale file version
+f="Mbiome_16s__FILT_iBact_F8iBact_R3_SP.fastq"
+mv -v "$f" "Raw_$f"
+
+#modifying file with 1 problematic sequence in order to run fastq_quality_filter (delete the problematic sequence)
+f="Mbiome_16s__FILT_iBact_F8iBact_R3_SP.fastq"
+awk 'NR%4==1{h=$0}
+     NR%4==2{s=$0}
+     NR%4==3{p=$0}
+     NR%4==0{q=$0;
+             # garder uniquement les records valides, et ignorer les séquences vides
+             if(length(s)>0 && length(s)==length(q) && h ~ /^@/ && p ~ /^\+/)
+               print h"\n"s"\n"p"\n"q
+            }' "Raw_$f" > "$f"
+
+#we keep only sequence with more than 80% of clean bases
+python3 run_quality_filter_on_raw.py --jobs 4
+
+
+#visualize filtering stat
+less quality_filter_stats.tsv
+
+
+#rename file with sample name
+python3 rename_cleaned_fastq_and_annotate_stats.py
