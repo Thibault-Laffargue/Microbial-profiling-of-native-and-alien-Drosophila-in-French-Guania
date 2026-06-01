@@ -1,16 +1,16 @@
 #!/bin/bash
-#Conversion from available file too ready for pipeline file.
+# Conversion from available files to ready-for-pipeline files.
 
 mapping_file="16s_PCR_plate_plan_Primer_Association.fixed"
 
-for file in 16s_Pool*.fastq.gz; do
-    pool=$(basename "$file" .fastq.gz)
-    pool=${pool#16s_}
+for file in 16s_*.fastq.gz; do
+    sample=$(basename "$file" .fastq.gz)
+    sample=${sample#16s_}
 
-    primer_assoc=$(awk -v pool="$pool" '$2 == pool {print $1}' "$mapping_file")
+    primer_assoc=$(awk -v sample="$sample" '$2 == sample {print $1}' "$mapping_file")
 
     if [ -z "$primer_assoc" ]; then
-        echo "[WARNING] No primer association found for $pool"
+        echo "[WARNING] No primer association found for $sample"
         continue
     fi
 
@@ -23,7 +23,6 @@ for file in 16s_Pool*.fastq.gz; do
 
     gunzip -c "$file" > "$output"
 done
-
 
 #rename file containing 1 problematic sequence in order to save the originale file version
 f="Mbiome_16s__FILT_iBact_F8iBact_R3_SP.fastq"
