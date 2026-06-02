@@ -10,7 +10,7 @@ The dataset contains:
 - **Pooled samples**: Sequenced for 16S and ITS markers
 - **Single-fly samples**: Sequenced for COI (Cytochrome Oxidase I)
 
-This repository has been structured so that its three main components can be used independently. As a result, you can skip any section that is not of interest to you.
+This repository has been structured so that its main components can be used independently. As a result, you can skip any section that is not of interest to you.
 
 ## Getting Started
 
@@ -20,6 +20,10 @@ This repository has been structured so that its three main components can be use
 4. In a terminal run the moving_data_script. 
 
 **Note:** Pooled samples can remain in the directory without interfering with the scripts.
+
+
+
+
 
 ## Drosophila Community Analyses
 
@@ -72,6 +76,10 @@ source("Typing_Drosophila_results.R")
 - Species composition by locality
 - Statistical tests (Chi-squared, Fisher's exact test)
 - Distribution maps of Drosophila species in French Guiana
+
+
+
+
 
 ## Drosophila microbiome Analyses
 
