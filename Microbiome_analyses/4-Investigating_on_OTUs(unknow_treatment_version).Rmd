@@ -1,0 +1,935 @@
+---
+title: "7-Investigating_on_OTUs"
+author: "T.Laffargue"
+date: "2025-05-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#dplyr
+install.packages("dplyr")
+
+#tibble
+install.packages("tibble")
+
+#ggplot2
+install.packages("ggplot2")
+
+#ggrepel
+install.packages("ggrepel")
+
+
+
+####### Library ######
+
+library(phyloseq)       
+library(dplyr)
+library(tibble)
+library(ggplot2) 
+library(patchwork)
+library(ggrepel)
+library(microbiome)
+library(writexl)
+library(tidyr)
+
+######################## Species aggregation ###################################################
+
+aggregate_to_species <- function(phy) {
+
+  otu_table_extracted <- otu_table(phy)
+  tax_table_extracted <- tax_table(phy)
+  sample_data_new     <- sample_data(phy)
+
+  otu_df <- as(otu_table_extracted, "matrix") %>%
+    as.data.frame(stringsAsFactors = FALSE) %>%
+    rownames_to_column("OTU")
+
+  # --- Retrieves Species rank via OTU ---
+  species_names <- tax_table_extracted[otu_df$OTU, "Species"]
+  species_names <- as.character(species_names)
+
+  # NA / empty -> Unassigned
+  species_names[is.na(species_names) | trimws(species_names) == ""] <- "Unassigned"
+  species_names <- trimws(species_names)
+
+  # ------------------------------------------------------------------
+  # 1) unique identifier by "Unknown" 
+  # ------------------------------------------------------------------
+  is_unknown_species <- function(x) grepl("^unknown\\s*species$", x, ignore.case = TRUE)
+  is_unknown_only    <- function(x) grepl("^unknown$", x, ignore.case = TRUE)
+
+  idx_us <- which(is_unknown_species(species_names))
+  if (length(idx_us) > 0) {
+    species_names[idx_us] <- paste0("Unknown Species", seq_along(idx_us))
+  }
+
+  idx_u <- which(is_unknown_only(species_names))
+  if (length(idx_u) > 0) {
+    species_names[idx_u] <- paste0("Unknown", seq_along(idx_u))
+  }
+
+  # ------------------------------------------------------------------
+  # 2) unique identifier by "X sp."
+  #    Ex: "Wolbachia sp." -> "Wolbachia sp. 1", "Wolbachia sp. 2", ...
+  # ------------------------------------------------------------------
+  # find "sp." at the end of value
+  is_sp_plain <- function(x) grepl("\\bsp\\.?\\s*$", x, ignore.case = TRUE)
+
+  idx_sp <- which(is_sp_plain(species_names))
+  if (length(idx_sp) > 0) {
+
+    # base = everything before "sp."
+    base_name <- function(x) {
+      sub("\\s+sp\\.?\\s*$", "", x, ignore.case = TRUE) %>% trimws()
+    }
+
+    bases <- base_name(species_names[idx_sp])
+    unique_bases <- unique(bases)
+
+    for (b in unique_bases) {
+      rows_b <- idx_sp[bases == b]
+      # unique identifier 1..n
+      species_names[rows_b] <- paste0(b, " sp. ", seq_along(rows_b))
+    }
+  }
+
+  # replace otu_df
+  otu_df$Species <- species_names
+  
+
+  # ------------------------------------------------------------------
+  # 3) Aggregation at Species rank
+  # ------------------------------------------------------------------
+  otu_agg <- otu_df %>%
+    dplyr::select(-OTU) %>%
+    dplyr::group_by(Species) %>%
+    dplyr::summarise(dplyr::across(where(is.numeric), sum), .groups = "drop") %>%
+    as.data.frame()
+
+  rownames(otu_agg) <- otu_agg$Species
+  otu_agg <- otu_agg[, -which(names(otu_agg) == "Species")]
+
+  otu_new <- otu_table(as.matrix(otu_agg), taxa_are_rows = TRUE)
+
+  # ------------------------------------------------------------------
+  # 4) Rebuild tax_table (one line by Species)
+  #    
+  # ------------------------------------------------------------------
+  tax_df <- as(tax_table_extracted, "matrix") %>%
+    as.data.frame(stringsAsFactors = FALSE)
+
+  # homogeneization of species name
+  tax_df$Species <- as.character(tax_table_extracted[rownames(tax_df), "Species"])
+  tax_df$Species[is.na(tax_df$Species) | trimws(tax_df$Species) == ""] <- "Unassigned"
+  tax_df$Species <- trimws(tax_df$Species)
+ 
+  # apply the same transformation on tax_df$Species with same OTU order
+  # to be coherent
+  # => we map OTU -> new species label
+  map_otu_to_new_species <- setNames(species_names, otu_df$OTU)
+  tax_df$Species <- map_otu_to_new_species[rownames(tax_df)]
+  View(tax_df)
+
+  tax_filtered <- tax_df %>%
+    dplyr::filter(Species %in% rownames(otu_new)) %>%
+    dplyr::distinct(Species, .keep_all = TRUE)
+
+  rownames(tax_filtered) <- tax_filtered$Species
+  tax_filtered <- tax_filtered[rownames(otu_new), , drop = FALSE]
+
+  tax_new <- tax_table(as.matrix(tax_filtered))
+
+  merge_phyloseq(otu_new, sample_data_new, tax_new)
+}
+
+
+# upload data
+phy16S <- readRDS("Clean_phyloseq_16S.rds")
+phyOL4 <- readRDS("Clean_phyloseq_OL4.rds")
+
+phy16S <- aggregate_to_species(phy16S)
+phyOL4 <- aggregate_to_species(phyOL4)
+
+
+
+####################################### Summary counts after species collapsing ###################################
+
+report_species_counts <- function(phy, dataset_name = "dataset") {
+
+  phy_species <- aggregate_to_species(phy)
+
+  # Taxa names = "Species labels" après collapse
+  all_species <- taxa_names(phy_species)
+  n_total_species <- length(all_species)
+
+  # Count every "Unknown*"
+  is_unknown_species_prefix <- function(x) {
+    !is.na(x) & grepl("^Unknown", x, ignore.case = TRUE)
+  }
+  n_unknown_species <- sum(is_unknown_species_prefix(all_species))
+
+  # Subset Native / Invasive
+  phy_native   <- subset_samples(phy_species, Category == "Native")
+  phy_invasive <- subset_samples(phy_species, Category == "Invasive")
+
+  # Matrices abondance
+  otu_native   <- as(otu_table(phy_native), "matrix")
+  otu_invasive <- as(otu_table(phy_invasive), "matrix")
+
+  # does taxa = rows?
+  if (!taxa_are_rows(phy_native)) {
+    otu_native   <- t(otu_native)
+    otu_invasive <- t(otu_invasive)
+  }
+
+  # detected species (sum > 0)
+  species_native   <- rownames(otu_native)[rowSums(otu_native) > 0]
+  species_invasive <- rownames(otu_invasive)[rowSums(otu_invasive) > 0]
+
+  n_native   <- length(species_native)
+  n_invasive <- length(species_invasive)
+
+  # Visualization
+  cat("\n==============================\n")
+  cat("Dataset:", dataset_name, "\n")
+  cat("Total 'species' after collapsing:", n_total_species, "\n")
+  cat("Number of 'Unknown Species*':", n_unknown_species, "\n")
+  cat("Detected in Native:", n_native, "\n")
+  cat("Detected in Invasive:", n_invasive, "\n")
+  cat("==============================\n")
+
+  return(data.frame(
+    Dataset = dataset_name,
+    Total_species_collapsed = n_total_species,
+    Unknown_Species = n_unknown_species,
+    Species_detected_native = n_native,
+    Species_detected_invasive = n_invasive,
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+
+# ---- apply to both dataset ----
+counts_16S <- report_species_counts(phy16S, "Bacteriome (16S)")
+counts_ITS <- report_species_counts(phyOL4, "Mycobiome (ITS)")
+
+
+####################################### Specific OTU Invasive ###################################
+
+# Function for  Invasive specific OTUs identifications
+get_invasive_specific_species <- function(phy) {
+  phy_species <- aggregate_to_species(phy)
+
+  phy_native   <- subset_samples(phy_species, Category == "Native")
+  phy_invasive <- subset_samples(phy_species, Category == "Invasive")
+
+  otu_native   <- as(otu_table(phy_native), "matrix")
+  otu_invasive <- as(otu_table(phy_invasive), "matrix")
+
+  if (!taxa_are_rows(phy_native)) {
+    otu_native   <- t(otu_native)
+    otu_invasive <- t(otu_invasive)
+  }
+
+  otu_native   <- otu_native[rowSums(otu_native) > 0, , drop = FALSE]
+  otu_invasive <- otu_invasive[rowSums(otu_invasive) > 0, , drop = FALSE]
+
+  species_native   <- rownames(otu_native)
+  species_invasive <- rownames(otu_invasive)
+
+  # --- Helpers ---
+  # sp-num : accept "sp. 3" (16S) and "_sp. 3" (OL4)
+  is_sp_num <- function(x) !is.na(x) & grepl("(\\bsp\\.|_sp\\.)\\s*\\d+$", x)
+
+  # extract what is before "sp. X"
+  sp_prefix <- function(x) {
+    sub("(\\bsp\\.|_sp\\.)\\s*\\d+$", "", x) %>% trimws()
+  }
+
+  # Unknown Species*
+  is_unknown_species_prefix <- function(x) !is.na(x) & grepl("^Unknown[ _.-]*Species", x, ignore.case = TRUE)
+
+  # Unknown* but not Unknown Species*
+  is_unknown_prefix <- function(x) !is.na(x) & grepl("^Unknown", x, ignore.case = TRUE) & !is_unknown_species_prefix(x)
+
+  native_has_unknown_species <- any(is_unknown_species_prefix(species_native))
+  native_has_unknown         <- any(is_unknown_prefix(species_native))
+
+  # what is before "sp." detectable in natives (to compare) ?
+  native_sp_prefixes <- unique(sp_prefix(species_native[is_sp_num(species_native)]))
+
+  specific_flags <- vapply(species_invasive, function(s) {
+
+    # 1) Unknown Species*
+    if (is_unknown_species_prefix(s)) return(!native_has_unknown_species)
+
+    # 2) Unknown* (but not Unknown Species*)
+    if (is_unknown_prefix(s)) return(!native_has_unknown)
+
+    # 3) normal cases
+    if (!is_sp_num(s)) return(!(s %in% species_native))
+
+    # 4) Cases sp-num : non-specific if same prefix before sp. is detected in natives
+    pref <- sp_prefix(s)
+    return(!(pref %in% native_sp_prefixes))
+
+  }, logical(1))
+
+  species_specific <- species_invasive[specific_flags]
+
+  return(list(
+    species_native   = species_native,
+    species_invasive = species_invasive,
+    species_specific = species_specific,
+    phy_species      = phy_species
+  ))
+}
+
+# Apply to both dataset
+species_16S <- get_invasive_specific_species(phy16S)
+species_OL4 <- get_invasive_specific_species(phyOL4)
+species_16S$species_specific
+species_OL4$species_specific
+
+
+############# Abundance of Specific species invasive ################################
+
+prepare_combined_specific_data <- function(phylo_obj, specific_species, dataset_name) {
+  phylo_obj <- microbiome::transform(phylo_obj, "compositional")
+
+  otu  <- as(otu_table(phylo_obj), "matrix")
+  tax  <- as.data.frame(tax_table(phylo_obj))
+  meta <- as(sample_data(phylo_obj), "data.frame") %>%
+    rownames_to_column("SampleID")
+
+  # Build an empty data.frame with the good structure 
+  make_empty_df <- function() {
+    meta %>%
+      dplyr::slice(0) %>%                      
+      dplyr::mutate(
+        Abundance = numeric(0),
+        OTU       = character(0),
+        Dataset   = character(0)
+      ) %>%
+      dplyr::select(SampleID, Abundance, OTU, Dataset, dplyr::everything())
+  }
+
+  # if there isn't specific Species → message
+  if (length(specific_species) == 0) {
+    message("No specific species in invasives for dataset ", dataset_name)
+    return(make_empty_df())
+  }
+
+  tax$Species[is.na(tax$Species) | tax$Species == ""] <- "Unassigned"
+  otu_to_species <- tax$Species
+  names(otu_to_species) <- rownames(tax)
+
+  data_list <- list()
+
+  for (sp in specific_species) {
+    otu_ids <- names(otu_to_species)[otu_to_species == sp]
+    if (length(otu_ids) == 0) next
+
+    otu_subset <- otu[otu_ids, , drop = FALSE]
+    abundance <- if (is.vector(otu_subset)) otu_subset else colSums(otu_subset)
+
+    df <- data.frame(
+      SampleID = names(abundance),
+      Abundance = abundance,
+      OTU = sp,
+      Dataset = dataset_name,
+      stringsAsFactors = FALSE
+    )
+
+    data_list[[sp]] <- df
+  }
+
+  # If specific species are detcted but abundance < 0 or other problem -> message
+  if (length(data_list) == 0) {
+    message("No specific species with non-zero abundance in invasives for dataset ", dataset_name)
+    return(make_empty_df())
+  }
+
+  all_data <- dplyr::bind_rows(data_list) %>%
+    dplyr::left_join(meta, by = "SampleID") %>%
+    dplyr::filter(Category == "Invasive", Abundance > 0)
+
+  # if filtering empty all → we keep the structure
+  if (nrow(all_data) == 0) {
+    message("All specific species have zero abundance in invasive samples for dataset ", dataset_name)
+    return(make_empty_df())
+  }
+
+  return(all_data)
+}
+
+# ========== Apply to both dataset ==========
+df_16S <- prepare_combined_specific_data(species_16S$phy_species, species_16S$species_specific, "Bacteriome")
+df_OL4 <- prepare_combined_specific_data(species_OL4$phy_species, species_OL4$species_specific, "Mycobiome")
+df_all <- bind_rows(df_16S, df_OL4)
+
+#Axis x and OTU legend in italic
+df_all <- df_all %>%
+  mutate(HostSpeciesLabel = paste0("italic('", HostSpecies, "')"))
+df_all$HostSpeciesLabel <- factor(df_all$HostSpeciesLabel, levels = unique(df_all$HostSpeciesLabel))
+
+df_all <- df_all %>%
+  mutate(OTULabel = paste0("italic('", OTU, "')"))
+
+# creat labels
+otu_levels <- unique(df_all$OTU)
+otu_labels <- paste0("italic('", otu_levels, "')")
+
+# Order the factor
+df_all$OTU <- factor(df_all$OTU, levels = otu_levels)
+
+# fixe order
+otu_labels <- unique(df_all$OTULabel)                
+df_all$OTULabel <- factor(df_all$OTULabel, levels = otu_labels)
+
+# Palette: same number of color than levels
+pal <- c("#7B241C", "#C1440E", "#FFA500", "#6A0DAD", "#22427C", "darkgreen")
+pal <- rep(pal, length.out = length(otu_labels))
+names(pal) <- otu_labels
+
+# ========== Build general graphics with vertical facets ==========
+library(scales)  # for log10 breaks
+
+set.seed(42)
+jwidth <- 0.5
+lvl <- levels(df_all$HostSpeciesLabel)
+df_all$x_id  <- as.integer(df_all$HostSpeciesLabel)                  # 1,2,3…
+df_all$x_jit <- df_all$x_id + runif(nrow(df_all), -jwidth, jwidth)   # jitter fixe
+
+# -- calibrating for pseudo-log (Keep 0 and extend lower part) --
+min_pos <- suppressWarnings(min(df_all$Abundance[df_all$Abundance > 0], na.rm = TRUE))
+if (!is.finite(min_pos)) min_pos <- 1e-6
+sigma <- min_pos / 3  
+
+# 2) build graphics using x_jit for points + labels
+final_plot <- ggplot(df_all, aes(x = x_jit, y = Abundance, color = OTULabel, shape = Locality)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  ggrepel::geom_text_repel(
+    aes(label = SampleID),
+    direction = "y",
+    box.padding = 0.25, point.padding = 0.05,
+    min.segment.length = 0, segment.size = 0.25, segment.alpha = 0.6,
+    force = 0.1, force_pull = 0.5, max.overlaps = Inf, seed = 42,
+    show.legend = FALSE
+  ) +
+  # X Axes with labels in italic
+  scale_x_continuous(
+    breaks = seq_along(lvl),
+    labels = function(i) parse(text = lvl[i])
+  ) +
+  coord_cartesian(xlim = c(0.5, length(lvl) + 0.5)) +
+
+  # >>> Visualization of Y : same values, space pseudo-log, 1st graduation forced, Scientific labels without repetition <<<
+  scale_y_continuous(
+    breaks = function(lims) {
+      lo <- lims[1]; hi <- lims[2]
+      base  <- scales::pretty_breaks(n = 5)(c(lo, hi))
+      first <- if (lo > 0) signif(lo, digits = 1) else 0
+      sort(unique(c(0, first, base)))
+    },
+    labels = function(x) {
+      lab <- ifelse(x == 0, "0", format(x, scientific = TRUE, digits = 6))
+      lab
+    }
+  ) +
+  coord_trans(y = scales::pseudo_log_trans(sigma = sigma)) +
+
+  scale_color_manual(
+    values = pal, breaks = otu_labels, labels = parse(text = otu_labels),
+    guide  = guide_legend(override.aes = list(size = 4))
+  ) +
+  facet_wrap(~ Dataset, ncol = 2, scales = "free") +
+  theme_minimal(base_size = 13) +
+  labs(title = NULL, x = NULL, y = "Relative abundance", color = "OTU", shape = "Locality") +
+  theme(
+    strip.text   = element_text(size = 14, face = "bold"),
+    legend.text  = element_text(size = 12),
+    legend.title = element_text(size = 13, face = "bold"),
+    axis.text.x  = element_text(size = 10)
+  ) +
+  guides(color = guide_legend(label.theme = element_text(face = "italic")))
+
+# finale export
+ggsave("Combined_Abundance_Specific_Species_16S_OL4.pdf", final_plot, width = 12, height = 8)
+
+###########################################################################################
+############################# FOR NATIVE SPECIES #########################################
+##########################################################################################
+
+####################################### Specific OTU Native ###################################
+
+# Function for Natives specific OTUs identifications
+get_native_specific_species <- function(phy) {
+  phy_species <- aggregate_to_species(phy)
+
+  phy_native   <- subset_samples(phy_species, Category == "Native")
+  phy_invasive <- subset_samples(phy_species, Category == "Invasive")
+
+  otu_native   <- as(otu_table(phy_native), "matrix")
+  otu_invasive <- as(otu_table(phy_invasive), "matrix")
+
+  if (!taxa_are_rows(phy_native)) {
+    otu_native   <- t(otu_native)
+    otu_invasive <- t(otu_invasive)
+  }
+
+  otu_native   <- otu_native[rowSums(otu_native) > 0, , drop = FALSE]
+  otu_invasive <- otu_invasive[rowSums(otu_invasive) > 0, , drop = FALSE]
+
+  species_native   <- rownames(otu_native)
+  species_invasive <- rownames(otu_invasive)
+
+  # --- Helpers ---
+  is_sp_num <- function(x) !is.na(x) & grepl("(\\bsp\\.|_sp\\.)\\s*\\d+$", x)
+
+  sp_prefix <- function(x) {
+    sub("(\\bsp\\.|_sp\\.)\\s*\\d+$", "", x) %>% trimws()
+  }
+
+  is_unknown_species_prefix <- function(x) !is.na(x) & grepl("^Unknown[ _.-]*Species", x, ignore.case = TRUE)
+  is_unknown_prefix <- function(x) !is.na(x) & grepl("^Unknown", x, ignore.case = TRUE) & !is_unknown_species_prefix(x)
+
+  invasive_has_unknown_species <- any(is_unknown_species_prefix(species_invasive))
+  invasive_has_unknown         <- any(is_unknown_prefix(species_invasive))
+
+  # Prefixes sp. detected in invasives
+  invasive_sp_prefixes <- unique(sp_prefix(species_invasive[is_sp_num(species_invasive)]))
+
+  specific_flags <- vapply(species_native, function(s) {
+
+    # 1) Unknown Species*
+    if (is_unknown_species_prefix(s)) return(!invasive_has_unknown_species)
+
+    # 2) Unknown* (but not Unknown Species*)
+    if (is_unknown_prefix(s)) return(!invasive_has_unknown)
+
+    # 3) Normal cases
+    if (!is_sp_num(s)) return(!(s %in% species_invasive))
+
+    # 4) Cases sp-num : non specific if same prefix sp. is detected in invasives
+    pref <- sp_prefix(s)
+    return(!(pref %in% invasive_sp_prefixes))
+
+  }, logical(1))
+
+  species_specific <- species_native[specific_flags]
+
+  return(list(
+    species_native   = species_native,
+    species_invasive = species_invasive,
+    species_specific = species_specific,
+    phy_species      = phy_species
+  ))
+}
+
+
+# Apply to both dataset (NATIVES)
+species_native_16S <- get_native_specific_species(phy16S)
+species_native_OL4 <- get_native_specific_species(phyOL4)
+
+species_native_16S$species_specific
+species_native_OL4$species_specific
+
+
+############# Abundance of Specific species native ################################
+
+prepare_combined_specific_data_native <- function(phylo_obj, specific_species, dataset_name) {
+  phylo_obj <- microbiome::transform(phylo_obj, "compositional")
+
+  otu  <- as(otu_table(phylo_obj), "matrix")
+  tax  <- as.data.frame(tax_table(phylo_obj))
+  meta <- as(sample_data(phylo_obj), "data.frame") %>%
+    rownames_to_column("SampleID")
+
+  # Build empty data.frame with good structure
+  make_empty_df <- function() {
+    meta %>%
+      dplyr::slice(0) %>%                      
+      dplyr::mutate(
+        Abundance = numeric(0),
+        OTU       = character(0),
+        Dataset   = character(0)
+      ) %>%
+      dplyr::select(SampleID, Abundance, OTU, Dataset, dplyr::everything())
+  }
+
+  # If no specific species → message + df vide
+  if (length(specific_species) == 0) {
+    message("No specific species in natives for dataset ", dataset_name)
+    return(make_empty_df())
+  }
+
+  tax$Species[is.na(tax$Species) | tax$Species == ""] <- "Unassigned"
+  otu_to_species <- tax$Species
+  names(otu_to_species) <- rownames(tax)
+
+  data_list <- list()
+
+  for (sp in specific_species) {
+    otu_ids <- names(otu_to_species)[otu_to_species == sp]
+    if (length(otu_ids) == 0) next
+
+    otu_subset <- otu[otu_ids, , drop = FALSE]
+    abundance <- if (is.vector(otu_subset)) otu_subset else colSums(otu_subset)
+
+    df <- data.frame(
+      SampleID = names(abundance),
+      Abundance = abundance,
+      OTU = sp,
+      Dataset = dataset_name,
+      stringsAsFactors = FALSE
+    )
+
+    data_list[[sp]] <- df
+  }
+
+  # if there is no data for specific species (problem) -> message
+  if (length(data_list) == 0) {
+    message("No specific species with non-zero abundance in natives for dataset ", dataset_name)
+    return(make_empty_df())
+  }
+
+  all_data <- dplyr::bind_rows(data_list) %>%
+    dplyr::left_join(meta, by = "SampleID") %>%
+    dplyr::filter(Category == "Native", Abundance > 0)
+
+  # Si le filtre enlève tout → on garde quand même la structure cohérente
+  if (nrow(all_data) == 0) {
+    message("All specific species have zero abundance in native samples for dataset ", dataset_name)
+    return(make_empty_df())
+  }
+
+  return(all_data)
+}
+
+# ========== Apply to both dataset (NATIVES) ==========
+df_native_16S <- prepare_combined_specific_data_native(
+  species_native_16S$phy_species,
+  species_native_16S$species_specific,
+  "Bacteriome"
+)
+
+df_native_OL4 <- prepare_combined_specific_data_native(
+  species_native_OL4$phy_species,
+  species_native_OL4$species_specific,
+  "Mycobiome"
+)
+
+df_all_native <- dplyr::bind_rows(df_native_16S, df_native_OL4)
+
+
+
+######################## Graphic NATIVES specific ########################
+
+if (nrow(df_all_native) == 0) {
+  message("No native-specific species to plot in any dataset. Skipping native figure.")
+} else {
+
+  #Axis x and OTU legend in italic
+  df_all_native <- df_all_native %>%
+    mutate(HostSpeciesLabel = paste0("italic('", HostSpecies, "')"))
+  df_all_native$HostSpeciesLabel <- factor(df_all_native$HostSpeciesLabel,
+                                           levels = unique(df_all_native$HostSpeciesLabel))
+
+  df_all_native <- df_all_native %>%
+    mutate(OTULabel = paste0("italic('", OTU, "')"))
+
+  # Build italic labels
+  otu_levels_native <- unique(df_all_native$OTU)
+  otu_labels_native <- paste0("italic('", otu_levels_native, "')")
+
+  # factor order
+  df_all_native$OTU <- factor(df_all_native$OTU, levels = otu_levels_native)
+
+  # fix order
+  otu_labels_native <- unique(df_all_native$OTULabel)
+  df_all_native$OTULabel <- factor(df_all_native$OTULabel, levels = otu_labels_native)
+
+  # -------- Different Color Palette between Bacteria and Fungi --------
+otu_info <- df_all_native %>%
+  dplyr::distinct(OTULabel, Dataset)
+
+# Keep same order than legend
+otu_info <- df_all_native %>%
+  dplyr::distinct(OTULabel, Dataset)
+
+otu_bact  <- otu_info$OTULabel[otu_info$Dataset == "Bacteriome"]
+otu_fungi <- otu_info$OTULabel[otu_info$Dataset == "Mycobiome"]
+
+pal_bact  <- setNames(
+  colorRampPalette(c("black","grey", "purple", "pink" ,"darkblue","#17BECF","lightblue", "#2CA02C", "darkgreen"))(length(otu_bact)),
+  otu_bact
+)
+
+pal_fungi <- setNames(
+  colorRampPalette(c("black","grey","#7B241C", "red", "#C1440E", "#FFA500", "gold","yellow", "khaki", "lightgreen"))(length(otu_fungi)),
+  otu_fungi
+)
+
+pal_native <- c(pal_bact, pal_fungi)
+
+
+  library(scales)
+
+  set.seed(42)
+  jwidth <- 0.5
+  lvl_native <- levels(df_all_native$HostSpeciesLabel)
+  df_all_native$x_id  <- as.integer(df_all_native$HostSpeciesLabel)
+  df_all_native$x_jit <- df_all_native$x_id + runif(nrow(df_all_native), -jwidth, jwidth)
+
+  # -- sigma calibration for pseudo-log --
+  min_pos_native <- suppressWarnings(min(df_all_native$Abundance[df_all_native$Abundance > 0], na.rm = TRUE))
+  if (!is.finite(min_pos_native)) min_pos_native <- 1e-6
+  sigma_native <- min_pos_native / 3
+
+  final_plot_native <- ggplot(df_all_native,
+                              aes(x = x_jit, y = Abundance, color = OTULabel, shape = Locality)) +
+    geom_point(size = 2.5, alpha = 0.8) +
+    scale_x_continuous(
+      breaks = seq_along(lvl_native),
+      labels = function(i) parse(text = lvl_native[i])
+    ) +
+    coord_cartesian(xlim = c(0.5, length(lvl_native) + 0.5)) +
+    scale_y_continuous(
+      breaks = function(lims) {
+        lo <- lims[1]; hi <- lims[2]
+        base  <- scales::pretty_breaks(n = 5)(c(lo, hi))
+        first <- if (lo > 0) signif(lo, digits = 1) else 0
+        sort(unique(c(0, first, base)))
+      },
+      labels = function(x) {
+        lab <- ifelse(x == 0, "0", format(x, scientific = TRUE, digits = 6))
+        lab
+      }
+    ) +
+    coord_trans(y = scales::pseudo_log_trans(sigma = sigma_native)) +
+    scale_color_manual(
+      values = pal_native, breaks = otu_labels_native, labels = parse(text = otu_labels_native),
+      guide  = guide_legend(override.aes = list(size = 4))
+    ) +
+    facet_wrap(~ Dataset, ncol = 2, scales = "free") +
+    theme_minimal(base_size = 13) +
+    labs(title = NULL, x = NULL, y = "Relative abundance", color = "OTU", shape = "Locality") +
+    theme(
+      strip.text   = element_text(size = 14, face = "bold"),
+      legend.text  = element_text(size = 12),
+      legend.title = element_text(size = 13, face = "bold"),
+      axis.text.x  = element_text(size = 10)
+    ) +
+    guides(color = guide_legend(ncol = 1, label.theme = element_text(face = "italic")))
+
+
+  ggsave("Combined_Abundance_Specific_Species_NATIVE_16S_OL4.pdf",
+         final_plot_native, width = 12, height = 8)
+}
+
+
+#############################################################################################
+############################# Summary table ################################################
+############################################################################################
+
+build_specific_summary <- function(phy_species, specific_species,
+                                   specific_category, dataset_name) {
+
+  empty_df <- function() {
+    data.frame(
+      Dataset           = character(0),
+      Specific_category = character(0),
+      Species           = character(0),
+      Family            = character(0),
+      Abundance_max     = numeric(0),
+      Abundance_min     = numeric(0),
+      Prevalence        = numeric(0),
+      Host_species      = character(0),
+      stringsAsFactors  = FALSE
+    )
+  }
+
+  if (length(specific_species) == 0) {
+    message("No specific species for ", specific_category,
+            " in dataset ", dataset_name)
+    return(empty_df())
+  }
+
+  meta_all <- as(sample_data(phy_species), "data.frame")
+  meta_all$SampleID <- rownames(meta_all)
+
+  samples_keep <- meta_all$SampleID[meta_all$Category == specific_category]
+
+  if (length(samples_keep) == 0) {
+    message("No samples in category ", specific_category,
+            " for dataset ", dataset_name)
+    return(empty_df())
+  }
+
+  phy_cat <- prune_samples(samples_keep, phy_species)
+  phy_cat <- microbiome::transform(phy_cat, "compositional")
+
+  otu <- as(otu_table(phy_cat), "matrix")
+  if (!taxa_are_rows(phy_cat)) {
+    otu <- t(otu)
+  }
+
+  meta <- as(sample_data(phy_cat), "data.frame")
+
+  species_in_otu <- intersect(rownames(otu), specific_species)
+
+  if (length(species_in_otu) == 0) {
+    message("Specific species not found in OTU table for ",
+            specific_category, " in dataset ", dataset_name)
+    return(empty_df())
+  }
+
+  # ---- Mapping Species -> Family came from tax_table ----
+  tax <- as.data.frame(tax_table(phy_cat))
+  View(tax)
+  if ("Order" %in% colnames(tax)) {
+    fam_map <- as.character(tax$Order)
+    fam_map[is.na(fam_map) | fam_map == ""] <- "Unassigned"
+    names(fam_map) <- rownames(tax)  # rownames = taxa names = Species (after collapsing)
+  } else {
+    fam_map <- setNames(rep("Unassigned", nrow(tax)), rownames(tax))
+  }
+
+  n_samples_cat <- ncol(otu)
+
+  res_list <- lapply(species_in_otu, function(sp) {
+
+    vec <- otu[sp, ]
+    if (is.null(dim(vec))) {
+      vec <- matrix(vec, nrow = 1,
+                    dimnames = list(sp, colnames(otu)))
+    }
+    vec <- as.numeric(vec)
+
+    present <- vec > 0
+    if (!any(present)) return(NULL)
+
+    abund_max <- max(vec[present], na.rm = TRUE)
+    abund_min <- min(vec[present], na.rm = TRUE)
+
+    n_present <- sum(present)
+    prevalence <- n_present / n_samples_cat
+
+    host_species_present <- unique(meta$HostSpecies[present])
+    host_species_present <- sort(host_species_present)
+    host_species_str <- paste(host_species_present, collapse = "; ")
+
+    fam <- fam_map[[sp]]
+    if (is.null(fam) || is.na(fam) || fam == "") fam <- "Unassigned"
+
+    data.frame(
+      Specific_category = specific_category,
+      Dataset           = dataset_name,
+      Species           = sp,
+      Order            = fam,
+      Abundance_max     = abund_max,
+      Abundance_min     = abund_min,
+      Prevalence        = prevalence,
+      Host_species      = host_species_str,
+      stringsAsFactors  = FALSE
+    )
+  })
+
+  res <- dplyr::bind_rows(res_list)
+
+  # Prevalence in decreasing order and then abundance max in decreasing order
+  res <- res %>%
+    dplyr::arrange(dplyr::desc(Prevalence),
+                   dplyr::desc(Abundance_max),
+                   Species)
+
+  return(res)
+}
+
+
+
+
+# ---------- 16S: Invasive specific ----------
+summary_16S_invasive <- build_specific_summary(
+  phy_species       = species_16S$phy_species,
+  specific_species  = species_16S$species_specific,
+  specific_category = "Invasive",
+  dataset_name      = "Bacteriome"
+)
+
+# ---------- 16S: Native specific ----------
+summary_16S_native <- build_specific_summary(
+  phy_species       = species_native_16S$phy_species,
+  specific_species  = species_native_16S$species_specific,
+  specific_category = "Native",
+  dataset_name      = "Bacteriome"
+)
+
+# ---------- ITS / OL4: Invasive specific ----------
+summary_ITS_invasive <- build_specific_summary(
+  phy_species       = species_OL4$phy_species,
+  specific_species  = species_OL4$species_specific,
+  specific_category = "Invasive",
+  dataset_name      = "Mycobiome"
+)
+
+# ---------- ITS / OL4: Native specific ----------
+summary_ITS_native <- build_specific_summary(
+  phy_species       = species_native_OL4$phy_species,
+  specific_species  = species_native_OL4$species_specific,
+  specific_category = "Native",
+  dataset_name      = "Mycobiome"
+)
+
+# ---------- merged by data set + global ----------
+summary_native_all <- dplyr::bind_rows(summary_16S_native, summary_ITS_native)
+summary_invasive_all <- dplyr::bind_rows(summary_16S_invasive, summary_ITS_invasive)
+summary_all     <- dplyr::bind_rows(summary_native_all, summary_invasive_all)
+
+writexl::write_xlsx(
+  list(
+    All_specific_taxa       = summary_all,
+    Native_specific = summary_native_all,
+    Invasive_specific  = summary_invasive_all
+  ),
+  path = "Specific_taxa_summary(unknown_treatment).xlsx"
+)
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
