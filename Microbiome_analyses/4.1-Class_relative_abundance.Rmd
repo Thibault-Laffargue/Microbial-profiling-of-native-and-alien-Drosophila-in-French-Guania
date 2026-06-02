@@ -1,0 +1,231 @@
+---
+title: "4.1-Class"
+author: "T.Laffargue"
+date: "2026-03-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#dplyr
+install.packages("dplyr")
+
+#tibble
+install.packages("tibble")
+
+#ggplot2
+install.packages("ggplot2")
+
+#ggrepel
+install.packages("ggrepel")
+
+#ggpattern
+install.packages("ggpattern")
+
+
+
+####### Library ######
+
+library(phyloseq)       
+library(dplyr)
+library(tibble)
+library(ggplot2) 
+library(patchwork)
+library(ggrepel)
+library(microbiome)
+library(writexl)
+library(tidyr)
+library(ggtext)
+library(scales)
+library(ggpattern)
+
+# ---------------------------------------------------------
+# principale function
+# ---------------------------------------------------------
+plot_class_barplot <- function(rds_file, output_prefix = "phyloseq_plot") {
+  
+  # 1. upload phyloseq
+  ps <- readRDS(rds_file)
+  
+  # check
+  if (!inherits(ps, "phyloseq")) {
+    stop(paste(rds_file, "n'est pas un objet phyloseq valide."))
+  }
+  
+  # Replace "Unknown" par "Unclassified" in tax_table
+  tax_mat <- as.matrix(tax_table(ps))
+  tax_mat[tax_mat == "Unknown"] <- "Unclassified"
+  tax_table(ps) <- tax_table(tax_mat)
+  
+  if (!"Category" %in% colnames(sample_data(ps))) {
+    stop("La variable 'Category' est absente dans sample_data(ps).")
+  }
+  
+  if (!"HostSpecies" %in% colnames(sample_data(ps))) {
+    stop("La variable 'HostSpecies' est absente dans sample_data(ps).")
+  }
+  
+  if (!"Locality" %in% colnames(sample_data(ps))) {
+    stop("La variable 'Locality' est absente dans sample_data(ps).")
+  }
+  
+  if (!"Class" %in% rank_names(ps)) {
+    stop("Le rang taxonomique 'Class' n'existe pas dans cet objet.")
+  }
+  
+  # 2. merge at class level
+  ps_class <- tax_glom(ps, taxrank = "Class", NArm = FALSE)
+  
+  # 3. Transform in relative abundance
+  ps_rel <- transform_sample_counts(ps_class, function(x) x / sum(x))
+  
+  # 4. Convert in long data.frame
+  df <- psmelt(ps_rel)
+  
+  # 5. Managing unassigned classes
+  df$Class <- as.character(df$Class)
+  df$Class[is.na(df$Class) | df$Class == ""] <- "Unclassified"
+  
+  # 6. build sample metadata table
+  sample_df <- data.frame(sample_data(ps_rel))
+  sample_df$Sample <- rownames(sample_df)
+  
+  # Force Category order
+  sample_df$Category <- factor(sample_df$Category, levels = c("Invasive", "Native"))
+  
+  # Order by Category, then by HostSpecies and finally by Sample
+  sample_df <- sample_df %>%
+    arrange(Category, HostSpecies, Locality, Sample)
+  
+  # Sample final order
+  sample_order <- sample_df$Sample
+  
+  # Apply the order
+  df$Sample <- factor(df$Sample, levels = sample_order)
+  sample_df$Sample <- factor(sample_df$Sample, levels = sample_order)
+  
+  # 7. Category color
+  label_colors <- ifelse(sample_df$Category == "Native", "blue",
+                         ifelse(sample_df$Category == "Invasive", "red", "black"))
+  
+  # 8. X axes labels = HostSpecies + locality
+  new_labels <- paste0(sample_df$HostSpecies, "-", sample_df$Locality)
+  
+  axis_labels <- paste0(
+    "<span style='color:", label_colors, ";'>",
+    new_labels,
+    "</span>"
+  )
+  names(axis_labels) <- as.character(sample_df$Sample)
+  
+  # 9. Plot with HostSpecies-Locality labels 
+  p <- ggplot(df, aes(x = Sample, y = Abundance, fill = Class)) +
+    geom_bar(
+      stat = "identity",
+      width = 0.9,
+      colour = "grey30"
+    ) +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    scale_x_discrete(labels = axis_labels) +
+    labs(
+      title = paste("Class relative abundance for", output_prefix),
+      x = "",
+      y = "Relative abundance",
+      fill = "Class"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      axis.text.x = ggtext::element_markdown(angle = 90, hjust = 1, vjust = 0.5),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor = element_blank()
+    )
+  
+  # 9bis. 2nd plot with pools / samples names
+  pool_labels <- paste0(
+    "<span style='color:", label_colors, ";'>",
+    as.character(sample_df$Sample),
+    "</span>"
+  )
+  names(pool_labels) <- as.character(sample_df$Sample)
+  
+  p_pools <- p +
+    scale_x_discrete(labels = pool_labels) +
+    labs(
+      title = paste("Class relative abundance for", output_prefix, "- pool names")
+    )
+  
+  # 10. Save
+  ggsave(
+    filename = paste0(output_prefix, "_class_barplot.png"),
+    plot = p,
+    width = 14,
+    height = 7,
+    dpi = 300
+  )
+  
+  ggsave(
+    filename = paste0(output_prefix, "_class_barplot_pool_names.png"),
+    plot = p_pools,
+    width = 14,
+    height = 7,
+    dpi = 300
+  )
+  
+  return(list(
+    metadata_labels = p,
+    pool_labels = p_pools
+  ))
+}
+# ---------------------------------------------------------
+# Apply to both data set
+# ---------------------------------------------------------
+
+p_16S <- plot_class_barplot(
+  rds_file = "Clean_phyloseq_16S.rds",
+  output_prefix = "16S"
+)
+
+p_OL4 <- plot_class_barplot(
+  rds_file = "Clean_phyloseq_OL4.rds",
+  output_prefix = "OL4"
+)
+
+print(p_16S$metadata_labels)
+print(p_16S$pool_labels)
+
+print(p_OL4$metadata_labels)
+print(p_OL4$pool_labels)
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
