@@ -12,7 +12,7 @@ The dataset contains:
 
 ### Step 1: Download the Data and Scripts
 
-1. Download the folder `Drosophila_community_analyses` from GitHub
+1. Download the repository `Microbial-profiling-of-native-and-alien-Drosophila-in-French-Guania` from GitHub and open the folder `Drosophila_community_analyses`
 2. Download the raw sequencing data from ENA (PRJEB112398)
 3. Add the sequencing data files to this folder
 
