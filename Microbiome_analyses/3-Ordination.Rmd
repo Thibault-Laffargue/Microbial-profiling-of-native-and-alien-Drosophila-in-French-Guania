@@ -1,0 +1,781 @@
+---
+title: "3-Ordination"
+author: "T.Laffargue"
+date: "2025-12-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#ggplot2
+install.packages("ggplot2")
+
+#phytools
+install.packages("ape")
+install.packages("mnormt") #don't forgot to answer no at the question.
+install.packages("expm")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Biostrings")
+install.packages("remotes")
+library(remotes)
+remotes::install_github("KlausVigo/phangorn")
+install.packages("phytools")
+
+#dplyr
+install.packages("dplyr")
+
+#ape
+install.packages("ape")
+
+#tidyr
+install.packages("tidyr")
+
+#vegan
+install.packages("vegan")
+
+#tibble
+install.packages("tibble")
+
+#phangorn
+install.packages("phangorn")
+
+#ggnewscale
+install.packages("ggnewscale")
+
+####### Library ######
+
+library(phyloseq)       
+library(ape)            
+library(ggplot2) 
+library(phytools)
+library(dplyr)
+library(tidyr)
+library(vegan)
+library(tibble)
+library(phangorn)
+library(stringr)
+library(writexl)
+library(ggnewscale)
+library(grid)
+
+
+# ============================================================
+# 1) Build one HostSpecies color palette commun to 16s and ITS
+#    (MANUAL fixed colors per HostSpecies)
+# ============================================================
+
+build_global_species_palette <- function() {
+
+  fixed_colors <- c(
+    "Bipectinata complex sp." = "#7B241C",
+    "D. melanogaster"         = "#FFA500",
+    "D. paulistorum"          = "#22427C",
+    "Willistoni sp."          = "#1f9e89",
+    "D. sturtevanti"          = "olivedrab",
+    "Saltans sp."             = "darkgreen"
+  )
+
+  ordered_species <- names(fixed_colors)
+
+  species_labels <- setNames(
+    lapply(ordered_species, function(x) bquote(italic(.(x)))),
+    ordered_species
+  )
+
+  list(
+    colors = fixed_colors,
+    ordered_species = ordered_species,
+    species_labels = species_labels
+  )
+}
+
+global_palette <- build_global_species_palette()
+
+# ============================================================
+# Helper : PERMANOVA pairwise for 1 factor
+#   + Bonferroni correction on comparisons
+# ============================================================
+pairwise_permanova_one_factor <- function(dist_mat, grouping, nperm = 999) {
+  grouping <- droplevels(as.factor(grouping))
+  lev <- levels(grouping)
+
+  if (length(lev) < 2) return(NULL)
+
+  combs <- utils::combn(lev, 2, simplify = FALSE)
+  res_list <- list()
+
+  mat <- as.matrix(dist_mat)
+
+  for (cmb in combs) {
+    g1 <- cmb[1]
+    g2 <- cmb[2]
+
+    idx <- grouping %in% cmb
+    sub_group <- droplevels(grouping[idx])
+
+    tbl <- table(sub_group)
+    if (any(tbl < 2)) next
+
+    sub_dist <- as.dist(mat[idx, idx])
+    sub_meta <- data.frame(group = sub_group)
+
+    ad <- vegan::adonis2(
+      sub_dist ~ group,
+      data = sub_meta,
+      permutations = nperm,
+      by = "margin"
+    )
+
+    comp_name <- paste(g1, g2, sep = "_vs_")
+    res_list[[comp_name]] <- ad
+  }
+
+  if (length(res_list) == 0) return(NULL)
+
+  p_raw <- vapply(res_list, function(ad) {
+    if (!"Pr(>F)" %in% colnames(ad)) return(NA_real_)
+    rn <- rownames(ad)
+    if ("group" %in% rn) {
+      ad["group", "Pr(>F)"]
+    } else {
+      ad[1, "Pr(>F)"]
+    }
+  }, numeric(1))
+
+  p_adj <- stats::p.adjust(p_raw, method = "bonferroni")
+
+  for (i in seq_along(res_list)) {
+    ad <- res_list[[i]]
+    if (!"Pr(>F)" %in% colnames(ad)) next
+    rn <- rownames(ad)
+    if ("group" %in% rn) {
+      ad["group", "Pr(>F)"] <- p_adj[i]
+    } else {
+      ad[1, "Pr(>F)"] <- p_adj[i]
+    }
+    res_list[[i]] <- ad
+  }
+
+  res_list
+}
+
+# ============================================================
+# Utils: create a 16S dataset WITHOUT invasive pools (Category != "Invasive")
+# ============================================================
+make_16s_native_only <- function(infile, outfile = "Phyloseq_with_tree_16S_native_only.rds") {
+  phy <- readRDS(infile)
+
+  # Keep only Native pools (and drop empty taxa)
+  phy_native <- phyloseq::subset_samples(phy, Category == "Native")
+  phy_native <- phyloseq::prune_taxa(phyloseq::taxa_sums(phy_native) > 0, phy_native)
+
+  saveRDS(phy_native, outfile)
+  message("✅ Saved native-only 16S phyloseq to: ", outfile)
+  outfile
+}
+
+# ============================================================
+# 2) Unified analysis function
+#    + optional plots (plot = TRUE/FALSE)
+# ============================================================
+analyze_phyloseq <- function(file, prefix,
+                             marker = c("auto", "16S", "ITS"),
+                             ordered_localities = c("Cayenne", "Kaw", "Bélizon", "Nouragues"),
+                             global_palette = NULL,
+                             root_16s_tree = TRUE,
+                             verbose_rooting = TRUE,
+                             nperm = 999,
+                             make_plot = TRUE) {
+
+  marker <- match.arg(marker)
+  message("\U0001F4E6 Analyse : ", prefix)
+  phy <- readRDS(file)
+
+  if (marker == "auto") {
+    if (grepl("16s", prefix, ignore.case = TRUE)) marker <- "16S"
+    if (grepl("its|ol4", prefix, ignore.case = TRUE)) marker <- "ITS"
+
+    if (marker == "auto") {
+      has_tree <- !is.null(phyloseq::phy_tree(phy, errorIfNULL = FALSE))
+      marker <- if (has_tree) "16S" else "ITS"
+    }
+  }
+
+  permanova_results <- list(
+    global = list(),
+    category = list(),
+    host = list(),
+    dispersion = list(),
+    pairwise = list()
+  )
+
+  meta <- as(phyloseq::sample_data(phy), "data.frame") %>%
+    tibble::rownames_to_column("SampleID")
+
+  meta$Locality <- factor(meta$Locality, levels = ordered_localities)
+
+  present_species <- meta %>%
+    dplyr::pull(HostSpecies) %>%
+    as.character() %>%
+    unique()
+
+  # ---- palette (fixed colors, filtered to present species) ----
+  if (!is.null(global_palette)) {
+
+    ordered_species_present <- global_palette$ordered_species[
+      global_palette$ordered_species %in% present_species
+    ]
+
+    colors <- global_palette$colors[names(global_palette$colors) %in% ordered_species_present]
+    species_labels <- global_palette$species_labels[names(global_palette$species_labels) %in% ordered_species_present]
+
+    missing_in_palette <- setdiff(present_species, ordered_species_present)
+    if (length(missing_in_palette) > 0) {
+      colors <- c(colors, setNames(rep("grey60", length(missing_in_palette)), missing_in_palette))
+      species_labels <- c(
+        species_labels,
+        setNames(lapply(missing_in_palette, function(x) bquote(italic(.(x)))), missing_in_palette)
+      )
+      ordered_species_present <- c(ordered_species_present, missing_in_palette)
+    }
+
+    ordered_species <- ordered_species_present
+
+  } else {
+    ordered_species <- sort(present_species)
+    colors <- setNames(rep("grey60", length(ordered_species)), ordered_species)
+    species_labels <- setNames(lapply(ordered_species, function(x) bquote(italic(.(x)))), ordered_species)
+  }
+
+  meta$HostSpecies <- factor(meta$HostSpecies, levels = ordered_species)
+
+  # ============================================================
+  # Distances (+ plots if requested)
+  # ============================================================
+  if (marker == "16S") {
+
+    # ---- midpoint rooting ----
+    if (root_16s_tree) {
+      tr <- phyloseq::phy_tree(phy, errorIfNULL = FALSE)
+
+      if (is.null(tr)) {
+        warning("No phylogenetic tree found in the phyloseq object -> cannot compute UniFrac.")
+      } else {
+        if (!ape::is.rooted(tr)) {
+          tr_rooted <- phytools::midpoint.root(tr)
+          phyloseq::phy_tree(phy) <- tr_rooted
+          if (verbose_rooting) message("🌳 16S tree midpoint-rooted using phytools::midpoint.root()")
+          permanova_results$rooting <- list(method = "midpoint.root (phytools)")
+        } else {
+          if (verbose_rooting) message("🌳 Tree already rooted -> keeping existing root.")
+          permanova_results$rooting <- list(method = "already_rooted")
+        }
+      }
+    }
+
+    dist_list <- list(
+      `UniFrac` = phyloseq::UniFrac(phy, weighted = FALSE, normalized = TRUE),
+      `Weighted UniFrac` = phyloseq::UniFrac(phy, weighted = TRUE, normalized = TRUE)
+    )
+
+    # ---- Plot ONLY if requested ----
+    if (make_plot) {
+
+      if (!requireNamespace("patchwork", quietly = TRUE)) {
+        stop("Package 'patchwork' is required to combine UniFrac and Weighted UniFrac panels. Install it with: install.packages('patchwork')")
+      }
+
+      ord_list <- lapply(dist_list, function(d) phyloseq::ordinate(phy, method = "PCoA", distance = d))
+      percent_var <- lapply(ord_list, function(o) round(100 * o$values$Relative_eig[1:2], 1))
+
+      make_one_pcoa_plot <- function(dist_name, panel_title = NULL) {
+        o <- ord_list[[dist_name]]
+
+        df_one <- o$vectors %>%
+          as.data.frame() %>%
+          tibble::rownames_to_column("SampleID") %>%
+          dplyr::select(SampleID, x = Axis.1, y = Axis.2) %>%
+          dplyr::left_join(meta, by = "SampleID")
+
+        xlab <- paste0("Axis 1 (", percent_var[[dist_name]][1], "%)")
+        ylab <- paste0("Axis 2 (", percent_var[[dist_name]][2], "%)")
+
+        ggplot2::ggplot(df_one, ggplot2::aes(x = x, y = y)) +
+          ggplot2::geom_point(ggplot2::aes(color = HostSpecies, shape = Locality), size = 3, alpha = 0.8) +
+          ggplot2::scale_color_manual(values = colors, labels = species_labels, drop = TRUE) +
+          ggnewscale::new_scale_color() +
+          ggplot2::stat_ellipse(
+            ggplot2::aes(group = Category, color = Category),
+            linetype = "dashed", linewidth = 0.8, inherit.aes = TRUE
+          ) +
+          ggplot2::scale_color_manual(values = c(Invasive = "orange", Native = "blue")) +
+          ggplot2::theme_minimal() +
+          ggplot2::theme(
+            plot.title = ggplot2::element_text(size = 16, face = "bold"),
+            axis.title.x = ggplot2::element_text(face = "bold"),
+            axis.title.y = ggplot2::element_text(face = "bold"),
+            legend.text = ggplot2::element_text(size = 12),
+            legend.title = ggplot2::element_text(size = 13, face = "bold")
+          ) +
+          ggplot2::labs(
+            title = panel_title %||% dist_name,
+            x = xlab,
+            y = ylab
+          )
+      }
+
+      p_unifrac <- make_one_pcoa_plot("UniFrac", panel_title = "UniFrac")
+      p_wunifrac <- make_one_pcoa_plot("Weighted UniFrac", panel_title = "Weighted UniFrac")
+
+      # Assemble side-by-side; keep one shared legend (HostSpecies/Locality/Category)
+      # Assemble side-by-side; keep one shared legend (HostSpecies/Locality/Category)
+p_core <- (p_unifrac | p_wunifrac) +
+  patchwork::plot_layout(guides = "collect") &
+  ggplot2::theme(legend.position = "right")
+
+title_A <- patchwork::wrap_elements(
+  full = grid::textGrob(
+    "A",
+    x = 0, hjust = 0,
+    gp = grid::gpar(fontsize = 25, fontface = "bold")
+  )
+)
+
+p <- title_A / p_core +
+  patchwork::plot_layout(heights = c(0.06, 1))
+
+      # keep the same output name as before
+      ggplot2::ggsave(paste0("PCoA_UniFrac_", prefix, ".pdf"), plot = p, width = 10, height = 5)
+      permanova_results$plot <- p
+    }
+
+  } else { # ITS
+
+    dist_list <- list(
+      `Bray-Curtis` = phyloseq::distance(phy, method = "bray"),
+      `Jaccard`     = phyloseq::distance(phy, method = "jaccard", binary = TRUE)
+    )
+
+    if (make_plot) {
+      ord_list <- lapply(dist_list, function(d) phyloseq::ordinate(phy, method = "NMDS", distance = d))
+
+      stress_vals <- sapply(ord_list, function(o) {
+        if (!is.null(o$stress)) round(o$stress, 3) else NA_real_
+      })
+
+      facet_labels <- setNames(
+        paste0(names(stress_vals), " (stress=", stress_vals, ")"),
+        names(stress_vals)
+      )
+
+      df_all <- dplyr::bind_rows(lapply(names(ord_list), function(nm) {
+        o <- ord_list[[nm]]
+        o$points %>%
+          as.data.frame() %>%
+          tibble::rownames_to_column("SampleID") %>%
+          dplyr::select(SampleID, x = MDS1, y = MDS2) %>%
+          dplyr::left_join(meta, by = "SampleID") %>%
+          dplyr::mutate(Distance = nm)
+      })) %>%
+        dplyr::mutate(
+          Distance = factor(Distance, levels = c("Jaccard", "Bray-Curtis"))
+        )
+
+      p <- ggplot2::ggplot(df_all, ggplot2::aes(x = x, y = y)) +
+        ggplot2::geom_point(ggplot2::aes(color = HostSpecies, shape = Locality), size = 3, alpha = 0.8) +
+        ggplot2::scale_color_manual(values = colors, labels = species_labels, drop = TRUE) +
+        ggnewscale::new_scale_color() +
+        ggplot2::stat_ellipse(
+          ggplot2::aes(group = Category, color = Category),
+          linetype = "dashed", linewidth = 0.8, inherit.aes = TRUE
+        ) +
+        ggplot2::scale_color_manual(values = c(Invasive = "orange", Native = "blue")) +
+        ggplot2::facet_wrap(~Distance, scales = "free", labeller = ggplot2::labeller(Distance = facet_labels)) +
+        ggplot2::theme_minimal() +
+        ggplot2::theme(
+  plot.title = ggplot2::element_text(size = 25, face = "bold"),
+  strip.text = ggplot2::element_text(size = 16, face = "bold"),
+  legend.text = ggplot2::element_text(size = 12),
+  legend.title = ggplot2::element_text(size = 13, face = "bold")
+        ) +
+        ggplot2::labs(
+          title = "B",
+          x = "NMDS1",
+          y = "NMDS2"
+        )
+
+      ggplot2::ggsave(paste0("NMDS_Jaccard_Bray_", prefix, ".pdf"), plot = p, width = 10, height = 5)
+      permanova_results$plot <- p
+    }
+  }
+
+  # ============================================================
+  # PERMANOVA (global + pairwise) + BETADISPER (each distance)
+  # with guards for factors with <2 levels (e.g., Category in native-only)
+  # ============================================================
+  for (nm in names(dist_list)) {
+    cat("\n🔎 ", nm, " PERMANOVA - ", prefix, "\n", sep = "")
+
+    # ---- drop unused levels ----
+    meta$HostSpecies <- droplevels(as.factor(meta$HostSpecies))
+    meta$Locality    <- droplevels(as.factor(meta$Locality))
+    meta$Category    <- droplevels(as.factor(meta$Category))
+
+    n_host <- nlevels(meta$HostSpecies)
+    n_loc  <- nlevels(meta$Locality)
+    n_cat  <- nlevels(meta$Category)
+
+    permanova_results$global[[nm]] <- list()
+
+    if (n_host >= 2 && n_loc >= 2) {
+      permanova_results$global[[nm]]$Host_Locality <-
+        vegan::adonis2(dist_list[[nm]] ~ Locality * HostSpecies,
+                       data = meta, by = "terms", permutations = nperm)
+      print(permanova_results$global[[nm]]$Host_Locality)
+    } else {
+      permanova_results$global[[nm]]$Host_Locality <- NULL
+      message("⚠️ Skip Host_Locality: need >=2 levels for HostSpecies and Locality")
+    }
+
+    if (n_loc >= 2 && n_cat >= 2) {
+      permanova_results$global[[nm]]$Locality_Category <-
+        vegan::adonis2(dist_list[[nm]] ~ Category * Locality,
+                       data = meta, by = "terms", permutations = nperm)
+      print(permanova_results$global[[nm]]$Locality_Category)
+    } else {
+      permanova_results$global[[nm]]$Locality_Category <- NULL
+      message("⚠️ Skip Locality_Category: need >=2 levels for Locality and Category")
+    }
+
+    if (n_host >= 2) {
+      permanova_results$global[[nm]]$Host <-
+        vegan::adonis2(dist_list[[nm]] ~ HostSpecies,
+                       data = meta, by = "margin", permutations = nperm)
+      print(permanova_results$global[[nm]]$Host)
+    } else {
+      permanova_results$global[[nm]]$Host <- NULL
+      message("⚠️ Skip Host: HostSpecies has <2 levels")
+    }
+
+    if (n_loc >= 2) {
+      permanova_results$global[[nm]]$Locality <-
+        vegan::adonis2(dist_list[[nm]] ~ Locality,
+                       data = meta, by = "margin", permutations = nperm)
+      print(permanova_results$global[[nm]]$Locality)
+    } else {
+      permanova_results$global[[nm]]$Locality <- NULL
+      message("⚠️ Skip Locality: Locality has <2 levels")
+    }
+
+    permanova_results$pairwise[[nm]] <- list(
+      HostSpecies = if (n_host >= 2) pairwise_permanova_one_factor(dist_list[[nm]], meta$HostSpecies, nperm = nperm) else NULL,
+      Locality    = if (n_loc  >= 2) pairwise_permanova_one_factor(dist_list[[nm]], meta$Locality,    nperm = nperm) else NULL
+    )
+
+    permanova_results$dispersion[[nm]] <- list()
+
+    if (n_cat >= 2) {
+      bd_cat <- vegan::betadisper(dist_list[[nm]], group = meta$Category)
+      permanova_results$dispersion[[nm]]$Category <- anova(bd_cat)
+      cat("\n📏 ", nm, " BETADISPER(Category) - ", prefix, "\n", sep = "")
+      print(permanova_results$dispersion[[nm]]$Category)
+    } else {
+      permanova_results$dispersion[[nm]]$Category <- NULL
+      message("⚠️ Skip betadisper(Category): Category has <2 levels")
+    }
+
+    if (n_host >= 2) {
+      bd_host <- vegan::betadisper(dist_list[[nm]], group = meta$HostSpecies)
+      permanova_results$dispersion[[nm]]$HostSpecies <- anova(bd_host)
+      cat("\n📏 ", nm, " BETADISPER(HostSpecies) - ", prefix, "\n", sep = "")
+      print(permanova_results$dispersion[[nm]]$HostSpecies)
+    } else {
+      permanova_results$dispersion[[nm]]$HostSpecies <- NULL
+      message("⚠️ Skip betadisper(HostSpecies): HostSpecies has <2 levels")
+    }
+
+    if (n_loc >= 2) {
+      bd_loc <- vegan::betadisper(dist_list[[nm]], group = meta$Locality)
+      permanova_results$dispersion[[nm]]$Locality <- anova(bd_loc)
+      cat("\n📏 ", nm, " BETADISPER(Locality) - ", prefix, "\n", sep = "")
+      print(permanova_results$dispersion[[nm]]$Locality)
+    } else {
+      permanova_results$dispersion[[nm]]$Locality <- NULL
+      message("⚠️ Skip betadisper(Locality): Locality has <2 levels")
+    }
+  }
+
+  return(permanova_results)
+}
+
+# ============================================================
+# 3) Run the datasets
+# ============================================================
+
+# --- Original 16S (with plots) ---
+res_16s <- analyze_phyloseq(
+  "Phyloseq_with_tree_16S.rds",
+  prefix = "16S",
+  marker = "16S",
+  global_palette = global_palette,
+  root_16s_tree = TRUE,
+  verbose_rooting = TRUE,
+  make_plot = TRUE
+)
+
+# --- ITS (with plots) ---
+res_its <- analyze_phyloseq(
+  "Clean_phyloseq_OL4.rds",
+  prefix = "ITS",
+  marker = "ITS",
+  global_palette = global_palette,
+  make_plot = TRUE
+)
+
+# --- NEW: 16S Native-only (NO plots, only UniFrac/WUniFrac + PERMANOVA etc.) ---
+native16s_file <- make_16s_native_only(
+  infile  = "Phyloseq_with_tree_16S.rds",
+  outfile = "Phyloseq_with_tree_16S_native_only.rds"
+)
+
+res_16s_native_only <- analyze_phyloseq(
+  native16s_file,
+  prefix = "16S_native_only",
+  marker = "16S",
+  global_palette = global_palette,
+  root_16s_tree = TRUE,
+  verbose_rooting = TRUE,
+  make_plot = FALSE
+)
+
+# ============================================================
+# 4) Combine ordinations (ONLY original 16S + ITS)
+# ============================================================
+if (!requireNamespace("patchwork", quietly = TRUE)) {
+  stop("Package 'patchwork' is required to combine plots. Install it with: install.packages('patchwork')")
+}
+
+combined_plot <- patchwork::wrap_plots(
+  patchwork::wrap_elements(full = res_16s$plot),
+  res_its$plot,
+  ncol = 1,
+  heights = c(1, 1)
+)
+
+ggplot2::ggsave(
+  filename = "Ordinations.pdf",
+  plot = combined_plot,
+  width = 10,
+  height = 13
+)
+
+# ============================================================
+# 5) Export ALL PERMANOVA + pairwise PERMANOVA + BETADISPER into ONE Excel
+#    + keep R2 (PERMANOVA only)
+#    + NOW includes res_16s_native_only
+# ============================================================
+
+extract_full_tests <- function(obj, source_name) {
+  results <- list()
+
+  recurse <- function(x, path = character()) {
+    if (inherits(x, "anova") && "Pr(>F)" %in% colnames(x)) {
+
+      df <- as.data.frame(x)
+      df$term <- rownames(df)
+
+      Df_col <- if ("Df" %in% colnames(df)) "Df" else NA_character_
+
+      SS_col <- dplyr::case_when(
+        "SumOfSqs" %in% colnames(df) ~ "SumOfSqs",
+        "Sum Sq"   %in% colnames(df) ~ "Sum Sq",
+        TRUE ~ NA_character_
+      )
+
+      R2_col <- if ("R2" %in% colnames(df)) "R2" else NA_character_
+
+      F_col <- dplyr::case_when(
+        "F"       %in% colnames(df) ~ "F",
+        "F value" %in% colnames(df) ~ "F value",
+        TRUE ~ NA_character_
+      )
+
+      for (i in seq_len(nrow(df))) {
+        row <- df[i, ]
+        orig_term <- row$term
+
+        if (orig_term %in% c("Residual", "Model", "Total")) next
+
+        is_pairwise <- any(path == "pairwise")
+
+        if (is_pairwise && length(path) >= 4) {
+          factor_name <- path[3]
+          comparison  <- path[4]
+          term_label  <- paste0(factor_name, ":", comparison)
+        } else {
+          term_label <- orig_term
+        }
+
+        results[[length(results) + 1]] <<- data.frame(
+          source = source_name,
+          level1 = path[1], level2 = path[2], level3 = path[3],
+          level4 = path[4], level5 = path[5], level6 = path[6],
+          Term = term_label,
+          Df = if (!is.na(Df_col)) row[[Df_col]] else NA_real_,
+          SumOfSqs = if (!is.na(SS_col)) row[[SS_col]] else NA_real_,
+          R2 = if (!is.na(R2_col)) row[[R2_col]] else NA_real_,
+          F = if (!is.na(F_col)) row[[F_col]] else NA_real_,
+          p_value = row[["Pr(>F)"]],
+          stringsAsFactors = FALSE
+        )
+      }
+
+    } else if (is.list(x)) {
+      for (nm in names(x)) recurse(x[[nm]], c(path, nm))
+    }
+  }
+
+  recurse(obj)
+  dplyr::bind_rows(results)
+}
+
+format_tests_table <- function(df_all) {
+
+  df_all <- df_all %>%
+    dplyr::filter(!Term %in% c("Residual", "Model", "Total")) %>%
+    dplyr::select(-Df, -SumOfSqs, -F)
+
+  df_all <- df_all %>%
+    dplyr::mutate(
+      source = dplyr::case_when(
+        source %in% c("res_16s", "res_16S", "res16s") ~ "bacteriome",
+        source %in% c("res_its", "res_ITS", "res_OL4", "res_ol4") ~ "mycobiome",
+        source %in% c("res_16s_native_only", "res_16S_native_only") ~ "bacteriome_native_only",
+        TRUE ~ source
+      ),
+      Dataset = paste(source, level1, sep = " - "),
+      Test = dplyr::case_when(
+        level1 == "dispersion" ~ "Betadisper",
+        level1 == "pairwise"   ~ "Permanova_pairwise",
+        TRUE                   ~ "Permanova"
+      )
+    )
+
+  df_all <- df_all %>%
+    dplyr::mutate(
+      Dataset = dplyr::case_when(
+        Dataset %in% c("bacteriome - global", "bacteriome - dispersion", "bacteriome - pairwise") ~ "bacteriome",
+        Dataset %in% c("mycobiome - global", "mycobiome - dispersion", "mycobiome - pairwise")   ~ "mycobiome",
+        Dataset %in% c("bacteriome_native_only - global", "bacteriome_native_only - dispersion", "bacteriome_native_only - pairwise") ~ "bacteriome_native_only",
+        TRUE ~ Dataset
+      )
+    )
+
+  df_all <- df_all %>%
+    dplyr::mutate(
+      Distance = level2,
+      RawModel = level3
+    )
+
+  df_all <- df_all %>%
+    dplyr::mutate(
+      RawModel = dplyr::case_when(
+        RawModel == "Additive"           ~ "Locality + HostSpecies",
+        RawModel == "Interaction"        ~ "Locality X HostSpecies",
+        RawModel == "Host"               ~ "HostSpecies",
+        RawModel == "Host_Locality"      ~ "HostSpecies X Locality",
+        RawModel == "Locality_Category"  ~ "Locality X Category",
+        TRUE ~ RawModel
+      ),
+      Model = paste(Distance, RawModel, sep = " ~ ")
+    )
+
+  df_all %>%
+    dplyr::select(Dataset, Model, Test, Term, R2, p_value) %>%
+    dplyr::rename(`P-value` = p_value) %>%
+    dplyr::mutate(
+      R2 = dplyr::if_else(Test == "Betadisper", NA_real_, R2)
+    )
+}
+
+filtrer_groupes_modeles <- function(df_group) {
+  df_x <- df_group %>% dplyr::filter(stringr::str_detect(Model, "X"))
+
+  if (nrow(df_x) >= 2) {
+    n_signif <- sum(df_x$`P-value` < 0.05, na.rm = TRUE)
+    if (n_signif >= 2) {
+      return(df_x)
+    } else {
+      df_group <- df_group %>% dplyr::filter(!stringr::str_detect(Model, "X"))
+    }
+  }
+
+  if (any(stringr::str_detect(df_group$Model, "\\+"))) {
+    df_group <- df_group %>% dplyr::filter(stringr::str_detect(Model, "\\+"))
+  }
+
+  df_group
+}
+
+# ---- extract + combine + format ----
+df_16s_raw <- extract_full_tests(res_16s, "res_16s")
+df_its_raw <- extract_full_tests(res_its, "res_its")
+df_16s_native_raw <- extract_full_tests(res_16s_native_only, "res_16s_native_only")
+
+df_all_raw <- dplyr::bind_rows(df_16s_raw, df_its_raw, df_16s_native_raw)
+df_formatted <- format_tests_table(df_all_raw)
+
+df_perm      <- df_formatted %>% dplyr::filter(Test == "Permanova")
+df_pairwise  <- df_formatted %>% dplyr::filter(Test == "Permanova_pairwise")
+df_disp      <- df_formatted %>% dplyr::filter(Test == "Betadisper")
+
+df_perm_filtered <- df_perm %>%
+  dplyr::mutate(variable_expliquee = stringr::str_trim(stringr::str_extract(Model, "^[^~]+"))) %>%
+  dplyr::group_by(Dataset, variable_expliquee) %>%
+  dplyr::group_modify(~ filtrer_groupes_modeles(.x)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-variable_expliquee)
+
+df_filtered <- dplyr::bind_rows(df_perm_filtered, df_pairwise, df_disp) %>%
+  dplyr::arrange(Dataset, Test, Model, Term)
+
+View(df_filtered)
+writexl::write_xlsx(df_filtered, path = "Permanova_ordination.xlsx")
+
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
