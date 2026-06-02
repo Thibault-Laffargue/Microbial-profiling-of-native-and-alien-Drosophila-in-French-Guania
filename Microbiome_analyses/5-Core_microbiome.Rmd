@@ -1,0 +1,848 @@
+---
+title: "6-Core_microbiome"
+author: "T.Laffargue"
+date: "2025-05-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#ggplot2
+install.packages("ggplot2")
+
+#phytools
+install.packages("ape")
+install.packages("mnormt") #don't forgot to answer no at the question.
+install.packages("expm")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("Biostrings")
+install.packages("remotes")
+library(remotes)
+remotes::install_github("KlausVigo/phangorn")
+install.packages("phytools")
+
+#dplyr
+install.packages("dplyr")
+
+#ranacapa
+BiocManager::install("multtest")
+if (!requireNamespace("devtools", quietly = TRUE))
+      install.packages('devtools')
+library(devtools)
+devtools::install_github("gauravsk/ranacapa")
+
+#gridExtra
+install.packages("gridExtra")
+
+#vegan
+install.packages("vegan")
+
+#usedist
+install.packages("usedist")
+
+#breakaway
+install.packages("breakaway")
+
+#magrittr
+install.packages("magrittr")
+
+#tidyverse
+install.packages("tidyverse")
+
+#DESeq2
+BiocManager::install("DESeq2")
+
+#PMCMRplus
+install.packages("PMCMRplus")
+
+#openxlsx
+install.packages("openxlsx")
+
+#rstatix
+install.packages("rstatix")
+
+#reshape2
+install.packages("reshape2")
+
+#microbiome
+devtools::install_github("microbiome/microbiome")
+
+#scales
+install.packages("scales")
+
+####### Library ######
+
+library(phyloseq)
+library(ggplot2)
+library(phytools)
+library(dplyr)
+library(ranacapa)
+library(gridExtra)
+library(vegan)
+library(usedist)
+library(openxlsx)
+
+library(breakaway)
+library(magrittr)
+library(tidyverse)
+library(DESeq2)
+library(PMCMRplus)
+library(rstatix)
+library(reshape2)
+library(patchwork)
+library(RColorBrewer)
+library(microbiome)
+library(viridis)
+library(scales)
+library(cowplot)
+
+
+# Data set list
+datasets <- list(
+  "16S" = "Clean_phyloseq_16S.rds",
+  "OL4" = "Clean_phyloseq_OL4.rds"
+)
+
+# Replace "Candidatus" by "Can."
+shorten_candidatus <- function(species_vec) {
+  species_vec <- as.character(species_vec)
+  species_vec <- sub("^Candidatus", "Can.", species_vec)
+  species_vec
+}
+
+# Standard labels for Species :
+# - NA / vide -> "Unassigned"
+# - every variation of "Unknown" -> "Unclassified"
+# - every variation of "Unknown species" -> "Unclassified species"
+standardize_species_labels <- function(species_vec) {
+  species_vec <- as.character(species_vec)
+  species_vec[is.na(species_vec) | trimws(species_vec) == ""] <- "Unassigned"
+  species_vec <- trimws(species_vec)
+
+  # Unknown species / unknown_species / unknown-species / unknown. species, etc.
+  is_unknown_species <- function(x) {
+    grepl("^unknown[ _.-]*species$", x, ignore.case = TRUE)
+  }
+
+  # Unknown alone
+  is_unknown_only <- function(x) {
+    grepl("^unknown$", x, ignore.case = TRUE)
+  }
+
+  species_vec[is_unknown_species(species_vec)] <- "Unclassified species"
+  species_vec[is_unknown_only(species_vec)] <- "Unclassified"
+
+  species_vec
+}
+
+# Standard labels for Class :
+# - NA / vide -> "Unassigned class"
+# - Unknown / Unknown class -> "Unclassified class"
+standardize_class_labels <- function(class_vec) {
+  class_vec <- as.character(class_vec)
+  class_vec[is.na(class_vec) | trimws(class_vec) == ""] <- "Unassigned class"
+  class_vec <- trimws(class_vec)
+
+  is_unknown_class <- function(x) {
+    grepl("^unknown$|^unknown[ _.-]*class$", x, ignore.case = TRUE)
+  }
+
+  class_vec[is_unknown_class(class_vec)] <- "Unclassified class"
+  class_vec
+}
+
+# Unic identifiers :
+# - "Unclassified" -> "Unclassified_1", "Unclassified_2", ...
+# - "Unclassified species" -> "Unclassified species_1", ...
+# - "X sp." -> "X sp. 1", "X sp. 2", ...
+number_species_labels <- function(species_vec) {
+  species_vec <- as.character(species_vec)
+  species_vec[is.na(species_vec) | trimws(species_vec) == ""] <- "Unassigned"
+  species_vec <- trimws(species_vec)
+
+  # Standardization
+  species_vec <- standardize_species_labels(species_vec)
+
+  # --- Unclassified species (tolerate spaces/_/./-) ---
+  is_unclassified_species <- function(x) {
+    grepl("^unclassified[ _.-]*species$", x, ignore.case = TRUE)
+  }
+  idx_us <- which(!is.na(species_vec) & is_unclassified_species(species_vec))
+  if (length(idx_us) > 0) {
+    species_vec[idx_us] <- paste0("Unclassified species_", seq_along(idx_us))
+  }
+
+  # --- Unclassified alone ---
+  is_unclassified_only <- function(x) {
+    grepl("^unclassified$", x, ignore.case = TRUE)
+  }
+  idx_u <- which(!is.na(species_vec) & is_unclassified_only(species_vec))
+  if (length(idx_u) > 0) {
+    species_vec[idx_u] <- paste0("Unclassified_", seq_along(idx_u))
+  }
+
+  # --- "X sp." (tolerate "sp" or "sp.") ---
+  is_sp_plain <- function(x) grepl("\\bsp\\.?\\s*$", x, ignore.case = TRUE)
+  idx_sp <- which(!is.na(species_vec) & is_sp_plain(species_vec))
+
+  if (length(idx_sp) > 0) {
+    base_name <- function(x) trimws(sub("\\s+sp\\.?\\s*$", "", x, ignore.case = TRUE))
+    bases <- base_name(species_vec[idx_sp])
+
+    for (b in unique(bases)) {
+      rows_b <- idx_sp[bases == b]
+      species_vec[rows_b] <- paste0(b, " sp. ", seq_along(rows_b))
+    }
+  }
+
+  species_vec
+}
+
+# order OTUs/taxa vector by :
+# 1) Class
+# 2) OTU (alphabetical)
+order_within_group_by_class <- function(otu_vec, class_map) {
+  otu_vec <- as.character(otu_vec)
+  otu_vec <- otu_vec[!is.na(otu_vec)]
+  otu_vec <- otu_vec[otu_vec %in% names(class_map)]
+
+  if (length(otu_vec) == 0) return(character(0))
+
+  df <- data.frame(
+    OTU = otu_vec,
+    Class = unname(class_map[otu_vec]),
+    stringsAsFactors = FALSE
+  )
+
+  df$Class <- standardize_class_labels(df$Class)
+
+  df <- df %>%
+    dplyr::arrange(Class, OTU)
+
+  df$OTU
+}
+
+for (dataset_name in names(datasets)) {
+  cat("\n🔹 Traitement de :", dataset_name, "\n")
+
+  phy <- readRDS(datasets[[dataset_name]])
+  phy <- microbiome::transform(phy, "compositional")
+
+  prevalences <- seq(.05, 1, .05)
+  detections <- 10^seq(log10(1e-3), log10(.2), length = 20)
+
+  tax <- as.data.frame(tax_table(phy))
+  otu <- as(otu_table(phy), "matrix")
+
+  # taxonomic Standardization
+  tax$Class <- standardize_class_labels(tax$Class)
+
+  # Does OTUs are well in rows? 
+  if (!taxa_are_rows(phy)) otu <- t(otu)
+
+  # 1) Put Species in the same order than OTUs
+  tax$Species <- shorten_candidatus(tax$Species)
+  tax$Species <- standardize_species_labels(tax$Species)
+
+  # 2) unic identifiers by respecting OTUs
+  otu_ids <- rownames(otu)
+  species_ordered <- tax[otu_ids, "Species"]
+  species_ordered <- number_species_labels(species_ordered)
+
+  # 3) change order in tax_table
+  tax[otu_ids, "Species"] <- species_ordered
+
+  meta <- as(sample_data(phy), "data.frame")
+
+  otu_df <- as.data.frame(otu)
+  otu_df$Species <- tax[rownames(otu), "Species"]
+
+  species_list <- unique(otu_df$Species)
+  summed_list <- vector("list", length(species_list))
+  names(summed_list) <- species_list
+
+  for (sp in species_list) {
+    sub <- otu_df[otu_df$Species == sp, ]
+    summed <- colSums(sub[, !(names(sub) %in% "Species")])
+    summed_list[[sp]] <- summed
+  }
+
+  otu_result <- do.call(rbind, summed_list) %>% as.data.frame()
+  otu_result$Species <- rownames(otu_result)
+  rownames(otu_result) <- otu_result$Species
+  otu_result <- otu_result[, -which(names(otu_result) == "Species")]
+  otu_new <- otu_table(as.matrix(otu_result), taxa_are_rows = TRUE)
+
+  species_tax_table <- tax %>% dplyr::distinct(Species, .keep_all = TRUE)
+  rownames(species_tax_table) <- species_tax_table$Species
+  tax_new <- tax_table(as.matrix(species_tax_table[rownames(otu_new), ]))
+
+  # Mapping Species -> Class after aggregation
+  species_class_map <- species_tax_table %>%
+    dplyr::select(Species, Class) %>%
+    dplyr::mutate(
+      Species = as.character(Species),
+      Class = standardize_class_labels(Class)
+    )
+
+  class_vec <- setNames(species_class_map$Class, species_class_map$Species)
+
+  phy <- merge_phyloseq(otu_new, sample_data(phy), tax_new)
+  phy <- microbiome::transform(phy, "compositional")
+
+  # ============================================================
+  # >>> HostSpecies order = Invasive first, Native after
+  # ============================================================
+  host_categories_all <- as.data.frame(as.matrix(sample_data(phy))) %>%
+    dplyr::select(HostSpecies, Category) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(Category = factor(Category, levels = c("Invasive", "Native"))) %>%
+    dplyr::arrange(Category, HostSpecies)
+
+  ordered_HostSpecies <- host_categories_all %>%
+    dplyr::pull(HostSpecies) %>%
+    as.character()
+
+  core_otus_all <- c()
+  core_otus_by_host <- list()
+  hosts_used <- c()
+
+  for (host in ordered_HostSpecies) {
+    phy_sub <- subset_samples(phy, HostSpecies == host)
+    if (nsamples(phy_sub) > 1) {
+      core_phy <- core(phy_sub, detection = 0.001, prevalence = 0.5)
+      otus <- taxa_names(core_phy)
+      core_otus_by_host[[host]] <- otus
+      core_otus_all <- union(core_otus_all, otus)
+      hosts_used <- c(hosts_used, host)
+    }
+  }
+
+  # ============================================================
+  # >>> Keep only used host
+  # + order : Invasive first, then Native
+  # + inside Natives, first "D. paulistorum" and then "Willistoni sp."
+  # + option OL4 : force "Bipectinata complex sp." and then "D. melanogaster"
+  # ============================================================
+  ordered_HostSpecies <- ordered_HostSpecies[ordered_HostSpecies %in% hosts_used]
+
+  meta_df <- as.data.frame(as.matrix(sample_data(phy)))
+  host_categories <- meta_df %>%
+    dplyr::select(HostSpecies, Category) %>%
+    dplyr::distinct()
+
+  invasive_hosts_ordered <- host_categories %>%
+    dplyr::filter(Category == "Invasive", HostSpecies %in% ordered_HostSpecies) %>%
+    dplyr::arrange(HostSpecies) %>%
+    dplyr::pull(HostSpecies) %>%
+    as.character()
+
+  native_hosts_ordered <- host_categories %>%
+    dplyr::filter(Category == "Native", HostSpecies %in% ordered_HostSpecies) %>%
+    dplyr::arrange(HostSpecies) %>%
+    dplyr::pull(HostSpecies) %>%
+    as.character()
+
+  native_manual_first <- c("D. paulistorum", "Willistoni sp.")
+  native_hosts_ordered <- c(
+    native_manual_first[native_manual_first %in% native_hosts_ordered],
+    setdiff(native_hosts_ordered, native_manual_first)
+  )
+
+  ordered_HostSpecies <- c(invasive_hosts_ordered, native_hosts_ordered)
+
+  if (dataset_name == "OL4") {
+    manual_first <- c("Bipectinata complex sp.", "D. melanogaster")
+    ordered_HostSpecies <- c(
+      manual_first[manual_first %in% ordered_HostSpecies],
+      setdiff(ordered_HostSpecies, manual_first)
+    )
+  }
+
+  invasive_hosts <- host_categories %>%
+    dplyr::filter(Category == "Invasive") %>%
+    dplyr::pull(HostSpecies)
+
+  native_hosts <- host_categories %>%
+    dplyr::filter(Category == "Native") %>%
+    dplyr::pull(HostSpecies)
+
+  invasive_hosts <- invasive_hosts[invasive_hosts %in% hosts_used]
+  native_hosts   <- native_hosts[native_hosts %in% hosts_used]
+
+  # table HostSpecies -> Category, in the finale order
+  host_category_map <- host_categories %>%
+    dplyr::distinct(HostSpecies, Category) %>%
+    dplyr::filter(HostSpecies %in% ordered_HostSpecies)
+
+  host_category_vec <- setNames(host_category_map$Category, host_category_map$HostSpecies)
+
+  # titles colors by Category
+  host_title_colors <- c(
+    Invasive = "red",
+    Native   = "blue"
+  )
+
+  core_matrix <- sapply(hosts_used, function(h) core_otus_all %in% core_otus_by_host[[h]])
+  rownames(core_matrix) <- core_otus_all
+
+  hosts_for_common <- setdiff(hosts_used, "Z. indianus")
+  otus_communs <- rownames(core_matrix)[
+    rowSums(core_matrix[, hosts_for_common, drop = FALSE]) == length(hosts_for_common)
+  ]
+  otus_invasive_only <- rownames(core_matrix)[
+    rowSums(core_matrix[, invasive_hosts, drop = FALSE]) > 0 &
+      rowSums(core_matrix[, native_hosts, drop = FALSE]) == 0
+  ]
+  otus_native_only <- rownames(core_matrix)[
+    rowSums(core_matrix[, native_hosts, drop = FALSE]) > 0 &
+      rowSums(core_matrix[, invasive_hosts, drop = FALSE]) == 0
+  ]
+  otus_other <- setdiff(core_otus_all, c(otus_communs, otus_invasive_only, otus_native_only))
+
+  cat(
+    "\n✅ OTUs communs:", length(otus_communs),
+    "\n✅ OTUs seulement invasifs:", length(otus_invasive_only),
+    "\n✅ OTUs seulement natifs:", length(otus_native_only), "\n"
+  )
+
+  hilu.subset <- prune_taxa(core_otus_all, phy)
+  hilu.subset <- microbiome::transform(hilu.subset, "compositional")
+
+  # ---- OTUs order: group -> Class -> alphabetical ----
+  ordered_otus <- c(
+    order_within_group_by_class(otus_communs, class_vec),
+    order_within_group_by_class(otus_invasive_only, class_vec),
+    order_within_group_by_class(otus_native_only, class_vec),
+    order_within_group_by_class(otus_other, class_vec)
+  )
+  ordered_otus <- ordered_otus[ordered_otus %in% core_otus_all]
+
+  label_df <- data.frame(
+    OTU = factor(ordered_otus, levels = rev(ordered_otus)),
+    color = dplyr::case_when(
+      ordered_otus %in% otus_communs       ~ "#556B2F",
+      ordered_otus %in% otus_invasive_only ~ "#882255",
+      ordered_otus %in% otus_native_only   ~ "#0000CD",
+      TRUE                                 ~ "black"
+    )
+  )
+
+  label_df$OTU_expr <- paste0("italic('", gsub("'", "\\\\'", as.character(label_df$OTU)), "')")
+
+  y_axis_plot <- ggplot(label_df, aes(x = 1, y = OTU, label = OTU_expr)) +
+    geom_text(aes(color = I(color)), hjust = 1, size = 4.5, parse = TRUE) +
+    scale_y_discrete(limits = rev(ordered_otus)) +
+    expand_limits(x = c(0.7, 1)) +
+    theme_void() +
+    theme(
+      plot.margin = margin(5, 0, 5, 0),
+      plot.background = element_rect(color = NA),
+      legend.position = "none",
+      clip = "off"
+    )
+
+  legend_df <- label_df %>%
+    dplyr::distinct(color, .keep_all = TRUE)
+
+  legend_plot <- ggplot(legend_df, aes(x = color, fill = color)) +
+    geom_bar() +
+    scale_fill_identity(
+      breaks = c("#556B2F", "#882255", "#0000CD", "black"),
+      labels = c("Common OTUs", "Core Invasive only", "Core Native only", "Others"),
+      guide = "legend",
+      name = "Core OTUs classification"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position        = "bottom",
+      legend.direction       = "horizontal",
+      legend.title.position  = "top",
+      legend.justification   = "left",
+      legend.box.just        = "left",
+      legend.title           = element_text(size = 14, face = "bold"),
+      legend.text            = element_text(size = 13),
+      legend.key.size        = unit(1.2, "cm"),
+      axis.text              = element_blank(),
+      axis.title             = element_blank(),
+      panel.grid             = element_blank(),
+      axis.ticks             = element_blank(),
+      plot.margin            = margin(0, 0, 0, 0)
+    )
+
+  legend_y_labels <- cowplot::get_legend(legend_plot)
+
+  # ---- Légende séparée pour la prévalence ----
+  legend_prev_plot <- ggplot(
+    data.frame(x = 1:2, y = 1:2, z = c(0, 1)),
+    aes(x, y, fill = z)
+  ) +
+    geom_tile() +
+    scale_fill_gradientn(
+      colours = rev(brewer.pal(5, "Spectral")),
+      limits  = c(0, 1),
+      breaks  = c(0, 0.25, 0.5, 0.75, 1),
+      labels  = c("0", "0.25", "0.5", "0.75", "1"),
+      name    = "Prevalence"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position        = "bottom",
+      legend.direction       = "horizontal",
+      legend.title.position  = "top",
+      legend.title           = element_text(size = 14, face = "bold"),
+      legend.text            = element_text(size = 13),
+      legend.key.size        = unit(1.2, "cm"),
+      axis.text              = element_blank(),
+      axis.title             = element_blank(),
+      panel.grid             = element_blank(),
+      axis.ticks             = element_blank(),
+      plot.margin            = margin(0, 0, 0, 0)
+    )
+
+  legend_prev <- cowplot::get_legend(legend_prev_plot)
+
+  # ============================================================
+  # >>> OVERLAY GREY (Detected in microbiome but not core member)
+  # ============================================================
+  otu_mat_all <- as(otu_table(hilu.subset), "matrix")
+  if (!taxa_are_rows(hilu.subset)) otu_mat_all <- t(otu_mat_all)
+
+  meta_all <- as(sample_data(hilu.subset), "data.frame")
+
+  present_df <- lapply(hosts_used, function(h) {
+    idx_samp <- rownames(meta_all)[meta_all$HostSpecies == h]
+    if (length(idx_samp) == 0) return(NULL)
+
+    sub_mat <- otu_mat_all[, idx_samp, drop = FALSE]
+    present_in_microbiome <- rowSums(sub_mat > 0) > 0
+
+    data.frame(
+      HostSpecies = h,
+      OTU = rownames(sub_mat),
+      present_in_microbiome = present_in_microbiome,
+      stringsAsFactors = FALSE
+    )
+  }) %>% dplyr::bind_rows()
+
+  present_df <- present_df %>%
+    dplyr::mutate(
+      in_core = mapply(
+        function(otu, host) otu %in% core_otus_by_host[[host]],
+        OTU, HostSpecies
+      ),
+      present_not_core = present_in_microbiome & !in_core
+    )
+
+  core_plots <- list()
+  for (i in seq_along(ordered_HostSpecies)) {
+    host <- ordered_HostSpecies[i]
+    host_category <- unname(host_category_vec[host])
+    host_color <- if (!is.na(host_category) && host_category %in% names(host_title_colors)) {
+      host_title_colors[[host_category]]
+    } else {
+      "black"
+    }
+
+    core_otus_this_host <- core_otus_by_host[[host]]
+    phy_sub <- prune_taxa(core_otus_this_host, subset_samples(hilu.subset, HostSpecies == host))
+    n_pools <- nsamples(phy_sub)
+    n_otus <- length(core_otus_by_host[[host]])
+
+    if (n_pools > 1 && n_otus > 0) {
+      title_text <- paste0(
+        "<span style='color:", host_color, ";'><b><i>", host, "</i></b></span><br>(",
+        n_pools, " pools - ", n_otus, " OTUs)"
+      )
+
+      p_core <- plot_core(
+        phy_sub,
+        plot.type      = "heatmap",
+        prevalences    = prevalences,
+        detections     = detections,
+        min.prevalence = 0.5,
+        colours        = rev(brewer.pal(5, "Spectral"))
+      ) +
+        scale_fill_gradientn(
+          colours = rev(brewer.pal(5, "Spectral")),
+          limits  = c(0, 1),
+          name    = "Prevalence"
+        ) +
+        labs(title = title_text) +
+        scale_y_discrete(limits = rev(ordered_otus)) +
+        theme(
+          plot.title      = ggtext::element_markdown(size = 15, hjust = 0.5),
+          legend.position = if (i == length(ordered_HostSpecies)) "right" else "none",
+          axis.title.y    = element_blank(),
+          axis.text.y     = element_blank(),
+          axis.ticks.y    = element_blank(),
+          axis.title.x    = element_blank()
+        )
+
+      det_levels <- sort(unique(as.character(p_core$data$Detection)))
+
+      overlay_host <- present_df %>%
+        dplyr::filter(HostSpecies == host, present_not_core, OTU %in% ordered_otus) %>%
+        dplyr::mutate(OTU = factor(OTU, levels = rev(ordered_otus)))
+
+      if (nrow(overlay_host) > 0) {
+        overlay_tiles <- tidyr::expand_grid(
+          OTU = overlay_host$OTU,
+          Detection = det_levels
+        )
+
+        p_core <- p_core +
+          geom_tile(
+            data = overlay_tiles,
+            aes(x = Detection, y = OTU),
+            inherit.aes = FALSE,
+            fill = "grey85"
+          )
+      }
+
+      if (length(det_levels) <= 4) {
+        show_idx <- seq_along(det_levels)
+      } else {
+        show_idx <- unique(round(seq(1, length(det_levels), length.out = 4)))
+      }
+
+      labels_vec <- rep("", length(det_levels))
+      labels_vec[show_idx] <- formatC(
+        as.numeric(det_levels[show_idx]),
+        format = "f",
+        digits = 4,
+        drop0trailing = TRUE
+      )
+
+      p_core <- p_core +
+        scale_x_discrete(
+          limits = det_levels,
+          labels = labels_vec,
+          guide  = guide_axis(angle = 45, check.overlap = FALSE)
+        ) +
+        theme(axis.text.x = element_text(size = 11))
+
+      core_plots[[host]] <- p_core
+    }
+  }
+
+  core_plots_valid <- core_plots[!sapply(core_plots, is.null)]
+
+  heatmap_combined <- wrap_plots(core_plots_valid, nrow = 1) +
+    plot_layout(guides = "keep") &
+    theme(legend.position = "none")
+
+  combined_core <- wrap_plots(
+    y_axis_plot, heatmap_combined,
+    ncol = 2,
+    widths = c(0.18, 0.82),
+    guides = "keep",
+    byrow = FALSE
+  ) &
+    theme(plot.margin = margin(0, 0, -10, 0))
+
+  xlab_grob <- ggplot(data.frame(x = 1, y = 1), aes(x, y)) +
+    geom_blank() +
+    labs(x = "Detection threshold") +
+    theme_void() +
+    theme(
+      axis.title.x = element_text(size = 16, face = "bold"),
+      plot.margin  = margin(-10, 0, 0, 0)
+    )
+
+  xlab_row <- cowplot::plot_grid(
+    NULL,
+    xlab_grob,
+    ncol = 2,
+    rel_widths = c(0.25, 0.75)
+  )
+
+  bottom_legends <- cowplot::plot_grid(
+    legend_y_labels,
+    legend_prev,
+    ncol = 2,
+    rel_widths = c(0.75, 0.25),
+    align = "h"
+  )
+
+  combined <- cowplot::plot_grid(
+    combined_core,
+    xlab_row,
+    bottom_legends,
+    ncol = 1,
+    rel_heights = c(1, 0.05, 0.12)
+  )
+
+  ggsave(
+    paste0("Heatmap_core_microbiome_by_HostSpecies_", dataset_name, ".pdf"),
+    combined, width = 15, height = 9
+  )
+
+  ################ 3 heatmaps filtered by OTUs groups ########################################
+  otu_groups <- list(
+    Common   = otus_communs,
+    Invasive = otus_invasive_only,
+    Native   = otus_native_only,
+    Other    = otus_other
+  )
+
+  for (group_name in names(otu_groups)) {
+    otus_of_group <- otu_groups[[group_name]]
+    hilu_group <- prune_taxa(otus_of_group, hilu.subset)
+
+    if (ntaxa(hilu_group) == 0) {
+      cat("⚠ Aucun OTU pour le groupe", group_name, "dans", dataset_name, "\n")
+      next
+    }
+
+    # Order by classe and then alpha inside group
+    ordered_otus_group <- order_within_group_by_class(otus_of_group, class_vec)
+
+    core_plots_group <- list()
+    for (i in seq_along(ordered_HostSpecies)) {
+      host <- ordered_HostSpecies[i]
+      host_category <- unname(host_category_vec[host])
+      host_color <- if (!is.na(host_category) && host_category %in% names(host_title_colors)) {
+        host_title_colors[[host_category]]
+      } else {
+        "black"
+      }
+
+      core_otus_host <- intersect(core_otus_by_host[[host]], otus_of_group)
+
+      if (length(core_otus_host) == 0) next
+
+      phy_host_group <- prune_taxa(core_otus_host, subset_samples(hilu_group, HostSpecies == host))
+      if (nsamples(phy_host_group) < 2 || ntaxa(phy_host_group) == 0) next
+
+      title_text <- paste0(
+        "<span style='color:", host_color, ";'><b><i>", host, "</i></b></span><br>(",
+        nsamples(phy_host_group), " pools - ",
+        ntaxa(phy_host_group), " OTUs)"
+      )
+
+      p_group <- plot_core(
+        phy_host_group,
+        plot.type = "heatmap",
+        prevalences = prevalences,
+        detections = detections,
+        min.prevalence = 0.5,
+        colours = rev(brewer.pal(5, "Spectral"))
+      ) +
+        scale_fill_gradientn(
+          colours = rev(brewer.pal(5, "Spectral")),
+          limits = c(0, 1),
+          name = "Prevalence"
+        ) +
+        labs(title = title_text) +
+        scale_y_discrete(limits = rev(ordered_otus_group)) +
+        scale_x_discrete(breaks = c("0.001", "0.01", "0.05", "0.1", "0.2")) +
+        theme(
+          plot.title = ggtext::element_markdown(hjust = 0.5, size = 25),
+          legend.position = if (i == length(ordered_HostSpecies)) "right" else "none",
+          axis.title.y = element_blank(),
+          axis.text.y  = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_text(size = 20),
+          axis.title.x = element_text(size = 25)
+        )
+
+      core_plots_group[[host]] <- p_group
+    }
+
+    if (length(core_plots_group) == 0) next
+
+    core_plots_valid_group <- core_plots_group[!sapply(core_plots_group, is.null)]
+
+    heatmap_group <- wrap_plots(core_plots_valid_group, nrow = 1) +
+      plot_layout(guides = "collect") &
+      theme(legend.position = "right")
+
+    group_colors <- c(
+      Common   = "#556B2F",
+      Invasive = "#882255",
+      Native   = "#0000CD",
+      Other    = "#7A7A7A"
+    )
+
+    label_df_group <- data.frame(
+      OTU = factor(ordered_otus_group, levels = rev(ordered_otus_group)),
+      label = paste0("italic('", gsub("'", "\\\\'", ordered_otus_group), "')"),
+      color = group_colors[[group_name]]
+    )
+
+    y_axis_plot_group <- ggplot(label_df_group, aes(x = 1, y = OTU, label = label)) +
+      geom_text(aes(color = I(color)), hjust = 1, size = 8, parse = TRUE) +
+      scale_y_discrete(limits = rev(ordered_otus_group)) +
+      expand_limits(x = c(0.7, 1)) +
+      theme_void() +
+      theme(
+        plot.margin = margin(5, 0, 5, 0),
+        plot.background = element_rect(color = NA),
+        legend.position = "none",
+        clip = "off"
+      )
+
+    combined_group <- wrap_plots(
+      y_axis_plot_group, heatmap_group,
+      ncol = 2,
+      widths = c(0.25, 1),
+      guides = "keep",
+      byrow = FALSE
+    )
+
+    ggsave(
+      paste0("Heatmap_core_", group_name, "_OTUs_", dataset_name, ".pdf"),
+      combined_group,
+      width = 25, height = 15
+    )
+  }
+
+  ###################################################################################
+  assign(paste0("otus_communs_", dataset_name), otus_communs, envir = .GlobalEnv)
+  assign(paste0("otus_invasive_only_", dataset_name), otus_invasive_only, envir = .GlobalEnv)
+  assign(paste0("otus_native_only_", dataset_name), otus_native_only, envir = .GlobalEnv)
+  assign(paste0("otus_other_", dataset_name), otus_other, envir = .GlobalEnv)
+
+  saveRDS(otus_communs, file = paste0("otus_communs_", dataset_name, ".rds"))
+  saveRDS(otus_invasive_only, file = paste0("otus_invasive_only_", dataset_name, ".rds"))
+  saveRDS(otus_native_only, file = paste0("otus_native_only_", dataset_name, ".rds"))
+  saveRDS(otus_other, file = paste0("otus_other_", dataset_name, ".rds"))
+
+  cat("\n📅 Fini pour :", dataset_name, "\n")
+}
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
