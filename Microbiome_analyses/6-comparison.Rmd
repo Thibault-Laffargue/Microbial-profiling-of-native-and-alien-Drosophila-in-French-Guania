@@ -1,0 +1,1332 @@
+---
+title: "6-Comparison"
+author: "T.Laffargue"
+date: "2026-02-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+######################### initialization ##############################
+
+setwd("~/Desktop/thèse/Microbiome Biodiversity/Bacteria and fungi/Bacteria_and_Fungi/Analyse/Cluster_analyse")
+
+##### install packages #####
+
+#Phyloseq
+
+if(!requireNamespace("BiocManager")){
+     install.packages("BiocManager")}
+BiocManager::install("phyloseq")
+
+#ggplot2
+install.packages("ggplot2")
+
+#dplyr
+install.packages("dplyr")
+
+#writexl
+install.packages("writexl")
+
+
+####### Library ######
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(RColorBrewer)
+library(writexl)
+library(readr)
+library(tibble)
+library(scales)
+library(ggtext)
+library(tidytext)
+library(tidyr)
+library(purrr)
+library(patchwork)
+library(microbiome)
+
+
+############################################# rules for species name ################################################################
+
+number_species_labels <- function(species_vec) {
+
+  # 1) Cleaning
+  species_vec <- as.character(species_vec)
+  species_vec[is.na(species_vec) | trimws(species_vec) == ""] <- "Unassigned"
+  species_vec <- trimws(species_vec)
+
+  # 2) upload phyloseq "clean" (hilu)
+  frames <- sys.frames()
+  hilu_ref <- NULL
+
+  for (i in rev(seq_along(frames))) {
+    if (exists("hilu", envir = frames[[i]], inherits = FALSE)) {
+      hilu_ref <- get("hilu", envir = frames[[i]], inherits = FALSE)
+      break
+    }
+  }
+
+  # if hilu not find => use cleaned
+  if (is.null(hilu_ref)) return(species_vec)
+
+  # 3) replace Species by the "clean" one
+  otu_ids <- names(species_vec)
+  if (is.null(otu_ids)) return(species_vec)  # Security
+
+  tax_ref <- as.data.frame(tax_table(hilu_ref))
+
+  common_otus <- intersect(otu_ids, rownames(tax_ref))
+  if (length(common_otus) == 0) return(species_vec)
+
+  ref_species <- as.character(tax_ref[common_otus, "Species"])
+  ref_species[is.na(ref_species) | trimws(ref_species) == ""] <- "Unassigned"
+  ref_species <- trimws(ref_species)
+
+  species_vec[common_otus] <- ref_species
+
+  species_vec
+}
+
+
+################################### check host single sample and filtered sample ###################################################
+
+process_filtered <- function(prefix, physeq_file, physeq_filtered, invasive_core, native_core) {
+
+  # import
+  hilu <- readRDS(physeq_file)
+  hilu.filtered <- readRDS(physeq_filtered)
+
+  Core_invasive <- readRDS(invasive_core)
+  Core_native   <- readRDS(native_core)
+  print("import success")
+
+  # --------------------------------------------------
+  # HostSpecies with n = 1
+  # --------------------------------------------------
+  sd <- as.data.frame(sample_data(hilu))
+
+  host_counts <- table(sd$HostSpecies)
+  lonely_hosts <- names(host_counts[host_counts == 1])
+  lonely_samples <- rownames(sd)[sd$HostSpecies %in% lonely_hosts]
+
+  if (length(lonely_samples) == 0) {
+    has_lonely <- FALSE
+    hilu.lonely <- NULL
+    print("no lonely host -> skipping hilu.lonely")
+  } else {
+    hilu.lonely <- prune_samples(lonely_samples, hilu)
+    has_lonely <- nsamples(hilu.lonely) > 0
+    print("hilu.lonely created")
+  }
+
+  # --------------------------------------------------
+  # helper: clean names (delete unique identifiers)
+  # --------------------------------------------------
+  clean_final_number <- function(x) {
+    x <- as.character(x)
+    x <- trimws(x)
+    x[x == "" | is.na(x)] <- "Unassigned"
+    x
+  }
+
+  # --------------------------------------------------
+  # OTU -> Species 
+  # --------------------------------------------------
+  otu_to_species <- function(phy) {
+
+    otu <- as(otu_table(phy), "matrix")
+    if (!taxa_are_rows(phy)) otu <- t(otu)
+
+    # if phy is empty => stop
+    if (nrow(otu) == 0 || ncol(otu) == 0) return(NULL)
+
+    tax <- as.data.frame(tax_table(phy))
+
+    otu_ids <- rownames(otu)
+    species_ordered <- tax[otu_ids, "Species"]
+
+    species_ordered <- number_species_labels(species_ordered)
+    tax[otu_ids, "Species"] <- species_ordered
+
+    otu_df <- as.data.frame(otu)
+    otu_df$Species <- species_ordered
+
+    species_list <- unique(otu_df$Species)
+
+    summed_list <- lapply(species_list, function(sp) {
+      subm <- otu_df[otu_df$Species == sp, -ncol(otu_df), drop = FALSE]
+      colSums(subm)
+    })
+    names(summed_list) <- species_list
+
+    otu_species_mat <- do.call(rbind, summed_list)
+
+    otu_species_mat <- as.matrix(otu_species_mat)
+
+    if (nrow(otu_species_mat) == 0 || ncol(otu_species_mat) == 0) {
+      stop(prefix, " : otu_to_species produit une matrice vide")
+    }
+
+    rownames(otu_species_mat) <- names(summed_list)
+
+    otu_new <- otu_table(otu_species_mat, taxa_are_rows = TRUE)
+
+    tax_species <- tax
+    tax_species$..old <- rownames(tax_species)
+    tax_species$Species <- as.character(tax_species$Species)
+
+    tax_species_df <- tax_species[!duplicated(tax_species$Species), , drop = FALSE]
+    rownames(tax_species_df) <- tax_species_df$Species
+    tax_species_df$..old <- NULL
+
+    # force order / same names
+    tax_species_df <- tax_species_df[taxa_names(otu_new), , drop = FALSE]
+    tax_new <- tax_table(as.matrix(tax_species_df))
+
+    phyloseq(otu_new, sample_data(phy), tax_new)
+  }
+  print("OTU to species done")
+
+  # --------------------------------------------------
+  # helper: merged taxa that became identical after clean_final_number
+  # --------------------------------------------------
+  collapse_by_clean_name <- function(phy) {
+
+    if (is.null(phy)) return(NULL)
+
+    otu <- as(otu_table(phy), "matrix")
+    if (!taxa_are_rows(phy)) otu <- t(otu)
+
+    if (nrow(otu) == 0 || ncol(otu) == 0) return(NULL)
+
+    old_taxa <- rownames(otu)
+    new_taxa <- clean_final_number(old_taxa)
+
+    otu_collapsed <- rowsum(otu, group = new_taxa, reorder = FALSE)
+
+
+    if (is.null(dim(otu_collapsed))) {
+      otu_collapsed <- matrix(
+        otu_collapsed,
+        nrow = 1,
+        dimnames = list(unique(new_taxa), colnames(otu))
+      )
+    } else {
+      otu_collapsed <- as.matrix(otu_collapsed)
+      colnames(otu_collapsed) <- colnames(otu)
+    }
+
+    otu_new <- otu_table(otu_collapsed, taxa_are_rows = TRUE)
+
+    tax <- as.data.frame(tax_table(phy))
+    tax$..old <- rownames(tax)
+    tax$..clean <- clean_final_number(tax$..old)
+
+    tax_new_df <- tax[!duplicated(tax$..clean), , drop = FALSE]
+    rownames(tax_new_df) <- tax_new_df$..clean
+    tax_new_df$..old <- NULL
+    tax_new_df$..clean <- NULL
+
+    # align strict
+    tax_new_df <- tax_new_df[taxa_names(otu_new), , drop = FALSE]
+    tax_new <- tax_table(as.matrix(tax_new_df))
+
+    phyloseq(otu_new, sample_data(phy), tax_new)
+  }
+
+  # --------------------------------------------------
+  # Species level + unique identifiers collapse
+  # --------------------------------------------------
+  hilu.filtered.species <- collapse_by_clean_name(otu_to_species(hilu.filtered))
+  if (is.null(hilu.filtered.species)) stop(prefix, " : hilu.filtered donne 0 taxa ou 0 samples après transformation.")
+
+  if (has_lonely) {
+    hilu.lonely.species <- collapse_by_clean_name(otu_to_species(hilu.lonely))
+  }
+  print("collapsed !")
+
+  # --------------------------------------------------
+  # prepare list core
+  # --------------------------------------------------
+  Core_invasive_clean <- unique(clean_final_number(Core_invasive))
+  Core_native_clean   <- unique(clean_final_number(Core_native))
+
+  core_df <- rbind(
+    data.frame(core = "Core_invasive", taxon = Core_invasive_clean, stringsAsFactors = FALSE),
+    data.frame(core = "Core_native",   taxon = Core_native_clean,   stringsAsFactors = FALSE)
+  )
+  core_df <- core_df[!is.na(core_df$taxon) & core_df$taxon != "", , drop = FALSE]
+  core_df <- core_df[!duplicated(core_df), , drop = FALSE]
+
+  taxa_all <- unique(core_df$taxon)
+
+  # --------------------------------------------------
+  # helper: stats for host 
+  # --------------------------------------------------
+  host_stats <- function(phy, suffix) {
+
+    # relative abundance
+    phy_rel <- transform_sample_counts(phy, function(x) if (sum(x) == 0) x else x / sum(x))
+
+    otu <- as(otu_table(phy_rel), "matrix")
+    if (!taxa_are_rows(phy_rel)) otu <- t(otu)
+
+    # keep only taxa of interest; if absents => row with 0
+    missing_taxa <- setdiff(taxa_all, rownames(otu))
+    if (length(missing_taxa) > 0) {
+      add0 <- matrix(0, nrow = length(missing_taxa), ncol = ncol(otu),
+                     dimnames = list(missing_taxa, colnames(otu)))
+      otu <- rbind(otu, add0)
+    }
+    otu <- otu[taxa_all, , drop = FALSE]
+
+    meta <- as.data.frame(sample_data(phy_rel))
+    hosts <- unique(meta$HostSpecies)
+
+    out <- list()
+
+    for (h in hosts) {
+      samp <- rownames(meta)[meta$HostSpecies == h]
+      subm <- otu[, samp, drop = FALSE]
+
+      # median by taxa
+      med_ab <- apply(subm, 1, median)
+
+      # prevalence
+      prev <- rowSums(subm > 0) / ncol(subm)
+
+      # effective (= nb of samples by host)
+      eff <- length(samp)
+
+      out[[h]] <- data.frame(
+        taxon = taxa_all,
+        stringsAsFactors = FALSE
+      )
+
+      out[[h]][[paste0(h, "_abundance_", suffix)]]   <- as.numeric(med_ab)
+      out[[h]][[paste0(h, "_prevalence_", suffix)]]  <- as.numeric(prev)
+      out[[h]][[paste0(h, "_effectif_", suffix)]]    <- eff
+    }
+
+    Reduce(function(x, y) merge(x, y, by = "taxon", all = TRUE), out)
+  }
+  print("stat calculated")
+
+  # --------------------------------------------------
+  # Build finale table
+  # --------------------------------------------------
+  tab_filtered <- host_stats(hilu.filtered.species, "filtered")
+  tab_final <- merge(core_df, tab_filtered, by = "taxon", all.x = TRUE)
+
+  if (has_lonely) {
+    tab_lonely <- host_stats(hilu.lonely.species, "lonely")
+    tab_final <- merge(tab_final, tab_lonely, by = "taxon", all.x = TRUE)
+  }
+
+  tab_final <- tab_final[order(tab_final$core, tab_final$taxon), , drop = FALSE]
+  print("table created")
+
+  list(
+    prefix = prefix,
+    hilu.filtered.species = hilu.filtered.species,
+    hilu.lonely.species = if (has_lonely) hilu.lonely.species else NULL,
+    Core_invasive_clean = Core_invasive_clean,
+    Core_native_clean = Core_native_clean,
+    table = tab_final
+  )
+}
+
+
+
+
+
+analyse_filtered_16s <- process_filtered(prefix = "16s",
+physeq_file = "Clean_phyloseq_16S.rds",
+physeq_filtered = "filtered_out_16S.rds",
+invasive_core = "otus_invasive_only_16S.rds",
+native_core = "otus_native_only_16S.rds")
+
+
+analyse_filtered_ITS <- process_filtered(prefix="OL4",
+physeq_file = "Clean_phyloseq_OL4.rds",
+physeq_filtered = "filtered_out_OL4.rds",
+invasive_core = "otus_invasive_only_OL4.rds",
+native_core = "otus_native_only_OL4.rds")
+
+
+
+writexl::write_xlsx(analyse_filtered_16s$table, "analyse_filtered_16S.xlsx")
+writexl::write_xlsx(analyse_filtered_ITS$table, "analyse_filtered_ITS.xlsx")
+
+################################################## filtered core vs Unfiltered core ################################################
+
+core_filteredVScore <- function(prefix, physeq_file, physeq_filtered, invasive_core, native_core) {
+
+  # import
+  hilu <- readRDS(physeq_file)               # cleaned pool
+  hilu.filtered <- readRDS(physeq_filtered)  # filtered pool
+  print("import success")
+
+  # --------------------------------------------------
+  # Keep only HostSpecies presents in both version
+  # --------------------------------------------------
+  sd_clean <- as.data.frame(sample_data(hilu))
+  sd_filt  <- as.data.frame(sample_data(hilu.filtered))
+
+  hosts_clean <- unique(as.character(sd_clean$HostSpecies))
+  hosts_filt  <- unique(as.character(sd_filt$HostSpecies))
+  common_hosts <- intersect(hosts_clean, hosts_filt)
+
+  keep_clean <- rownames(sd_clean)[as.character(sd_clean$HostSpecies) %in% common_hosts]
+  keep_filt  <- rownames(sd_filt )[as.character(sd_filt $HostSpecies) %in% common_hosts]
+
+  hilu <- prune_samples(keep_clean, hilu)
+  hilu.filtered <- prune_samples(keep_filt, hilu.filtered)
+
+  print(paste0("common hosts kept: ", length(common_hosts)))
+
+  # --------------------------------------------------
+  # HostSpecies with n = 1
+  # --------------------------------------------------
+  sd <- as.data.frame(sample_data(hilu))
+
+  host_counts <- table(sd$HostSpecies)
+  lonely_hosts <- names(host_counts[host_counts == 1])
+  lonely_samples <- rownames(sd)[sd$HostSpecies %in% lonely_hosts]
+
+  if (length(lonely_samples) == 0) {
+    has_lonely <- FALSE
+    hilu.lonely <- NULL
+    print("no lonely host -> skipping hilu.lonely")
+  } else {
+    hilu.lonely <- prune_samples(lonely_samples, hilu)
+    has_lonely <- nsamples(hilu.lonely) > 0
+    print("hilu.lonely created")
+  }
+
+  # --------------------------------------------------
+  # helper: clean names
+  # --------------------------------------------------
+  clean_final_number <- function(x) {
+    x <- as.character(x)
+    x <- trimws(x)
+    x[x == "" | is.na(x)] <- "Unassigned"
+    x
+  }
+
+  # --------------------------------------------------
+  # OTU -> Species 
+  # --------------------------------------------------
+  otu_to_species <- function(phy) {
+
+    otu <- as(otu_table(phy), "matrix")
+    if (!taxa_are_rows(phy)) otu <- t(otu)
+    if (nrow(otu) == 0 || ncol(otu) == 0) return(NULL)
+
+    tax <- as.data.frame(tax_table(phy))
+
+    otu_ids <- rownames(otu)
+    species_ordered <- tax[otu_ids, "Species"]
+
+    species_ordered <- number_species_labels(species_ordered)
+    tax[otu_ids, "Species"] <- species_ordered
+
+    otu_df <- as.data.frame(otu)
+    otu_df$Species <- species_ordered
+
+    species_list <- unique(otu_df$Species)
+
+    summed_list <- lapply(species_list, function(sp) {
+      subm <- otu_df[otu_df$Species == sp, -ncol(otu_df), drop = FALSE]
+      colSums(subm)
+    })
+    names(summed_list) <- species_list
+
+    otu_species_mat <- do.call(rbind, summed_list)
+    otu_species_mat <- as.matrix(otu_species_mat)
+
+    if (nrow(otu_species_mat) == 0 || ncol(otu_species_mat) == 0) {
+      stop(prefix, " : otu_to_species produit une matrice vide")
+    }
+
+    rownames(otu_species_mat) <- names(summed_list)
+    otu_new <- otu_table(otu_species_mat, taxa_are_rows = TRUE)
+
+    tax_species <- tax
+    tax_species$..old <- rownames(tax_species)
+    tax_species$Species <- as.character(tax_species$Species)
+
+    tax_species_df <- tax_species[!duplicated(tax_species$Species), , drop = FALSE]
+    rownames(tax_species_df) <- tax_species_df$Species
+    tax_species_df$..old <- NULL
+
+    tax_species_df <- tax_species_df[taxa_names(otu_new), , drop = FALSE]
+    tax_new <- tax_table(as.matrix(tax_species_df))
+
+    phyloseq(otu_new, sample_data(phy), tax_new)
+  }
+  print("OTU to species done")
+
+  # --------------------------------------------------
+  # helper: merge taxa which are identical after clean_final_number
+  # --------------------------------------------------
+  collapse_by_clean_name <- function(phy) {
+
+    if (is.null(phy)) return(NULL)
+
+    otu <- as(otu_table(phy), "matrix")
+    if (!taxa_are_rows(phy)) otu <- t(otu)
+    if (nrow(otu) == 0 || ncol(otu) == 0) return(NULL)
+
+    old_taxa <- rownames(otu)
+    new_taxa <- clean_final_number(old_taxa)
+
+    otu_collapsed <- rowsum(otu, group = new_taxa, reorder = FALSE)
+
+    if (is.null(dim(otu_collapsed))) {
+      otu_collapsed <- matrix(
+        otu_collapsed,
+        nrow = 1,
+        dimnames = list(unique(new_taxa), colnames(otu))
+      )
+    } else {
+      otu_collapsed <- as.matrix(otu_collapsed)
+      colnames(otu_collapsed) <- colnames(otu)
+    }
+
+    otu_new <- otu_table(otu_collapsed, taxa_are_rows = TRUE)
+
+    tax <- as.data.frame(tax_table(phy))
+    tax$..old <- rownames(tax)
+    tax$..clean <- clean_final_number(tax$..old)
+
+    tax_new_df <- tax[!duplicated(tax$..clean), , drop = FALSE]
+    rownames(tax_new_df) <- tax_new_df$..clean
+    tax_new_df$..old <- NULL
+    tax_new_df$..clean <- NULL
+
+    tax_new_df <- tax_new_df[taxa_names(otu_new), , drop = FALSE]
+    tax_new <- tax_table(as.matrix(tax_new_df))
+
+    phyloseq(otu_new, sample_data(phy), tax_new)
+  }
+
+  # --------------------------------------------------
+  # Species level for CLEAN + FILTERED (+ LONELY)
+  # --------------------------------------------------
+  hilu.clean.species <- collapse_by_clean_name(otu_to_species(hilu))
+  if (is.null(hilu.clean.species)) stop(prefix, " : hilu (clean) donne 0 taxa ou 0 samples après transformation.")
+
+  hilu.filtered.species <- collapse_by_clean_name(otu_to_species(hilu.filtered))
+  if (is.null(hilu.filtered.species)) stop(prefix, " : hilu.filtered donne 0 taxa ou 0 samples après transformation.")
+
+  if (has_lonely) {
+    hilu.lonely.species <- collapse_by_clean_name(otu_to_species(hilu.lonely))
+  }
+  print("species objects created")
+
+  # --------------------------------------------------
+  # add origin and merged CLEAN + FILTERED
+  # --------------------------------------------------
+  sd_c <- as.data.frame(sample_data(hilu.clean.species))
+  sd_f <- as.data.frame(sample_data(hilu.filtered.species))
+
+  sd_c$Origin <- "cleaned"
+  sd_f$Origin <- "filtered"
+
+  sample_data(hilu.clean.species) <- sample_data(sd_c)
+  sample_data(hilu.filtered.species) <- sample_data(sd_f)
+
+  merged.species <- merge_phyloseq(hilu.clean.species, hilu.filtered.species)
+  print("merged phyloseq created (cleaned + filtered)")
+
+  # ============================================================
+  # Core microbiome
+  # ============================================================
+  if (!requireNamespace("microbiome", quietly = TRUE)) stop("Le package 'microbiome' est requis.")
+  if (!requireNamespace("RColorBrewer", quietly = TRUE)) stop("Le package 'RColorBrewer' est requis.")
+  if (!requireNamespace("patchwork", quietly = TRUE)) stop("Le package 'patchwork' est requis.")
+  if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Le package 'ggplot2' est requis.")
+
+  prevalences <- seq(.05, 1, .05)
+  detections  <- 10^seq(log10(1e-3), log10(.2), length = 20)
+
+  merged.comp <- microbiome::transform(merged.species, "compositional")
+
+  meta_m <- as.data.frame(sample_data(merged.comp))
+  meta_m$HostSpecies <- as.character(meta_m$HostSpecies)
+  meta_m$Origin      <- as.character(meta_m$Origin)
+
+  if ("Category" %in% colnames(meta_m)) {
+    host_order_df <- unique(meta_m[, c("HostSpecies", "Category")])
+    host_order_df$Category <- factor(host_order_df$Category, levels = c("Invasive", "Native"))
+    host_order_df <- host_order_df[order(host_order_df$Category, host_order_df$HostSpecies), , drop = FALSE]
+    ordered_HostSpecies <- as.character(host_order_df$HostSpecies)
+  } else {
+    ordered_HostSpecies <- sort(unique(meta_m$HostSpecies))
+  }
+
+  origin_levels <- c("cleaned", "filtered")
+  origin_levels <- origin_levels[origin_levels %in% unique(meta_m$Origin)]
+
+  subset_host_origin <- function(phy, host, org) {
+    meta <- as.data.frame(sample_data(phy))
+    keep <- rownames(meta)[as.character(meta$HostSpecies) == host &
+                             as.character(meta$Origin) == org]
+    prune_samples(keep, phy)
+  }
+
+  # labels X rounded at 4 decimals
+  format_x_4dp <- function(x) {
+    xv <- suppressWarnings(as.numeric(as.character(x)))
+    ifelse(is.na(xv), as.character(x), formatC(xv, format = "f", digits = 4))
+  }
+
+  # --- IMPORTANT: drop taxa with Prevalence==0 everywhere in plot_core data---
+  drop_all_zero_prevalence_from_plot <- function(p) {
+    d <- p$data
+    if (is.null(d) || !is.data.frame(d) || nrow(d) == 0) return(p)
+
+    taxa_col <- intersect(c("OTU", "Taxa", "taxa", "Taxon", "taxon"), colnames(d))[1]
+    prev_col <- intersect(c("Prevalence", "prevalence"), colnames(d))[1]
+
+    # if unexpected structure -> don't touch
+    if (is.na(taxa_col) || is.na(prev_col)) return(p)
+
+    taxa_chr <- as.character(d[[taxa_col]])
+    prev_num <- d[[prev_col]]
+
+    max_prev <- tapply(prev_num, taxa_chr, max, na.rm = TRUE)
+    keep_taxa <- names(max_prev)[max_prev > 0]
+
+    d2 <- d[taxa_chr %in% keep_taxa, , drop = FALSE]
+    if (nrow(d2) == 0) return(NULL)
+
+    # keep origine order
+    levs <- unique(taxa_chr)
+    levs_keep <- levs[levs %in% keep_taxa]
+    d2[[taxa_col]] <- factor(as.character(d2[[taxa_col]]), levels = levs_keep)
+
+    p$data <- d2
+    p + ggplot2::scale_y_discrete(drop = TRUE)
+  }
+
+  # fallback heatmap nsamples==1 : keep only the detected 
+  plot_single_sample_presence <- function(phy_sub, title_text, detection = 0.001) {
+    otu <- as(otu_table(phy_sub), "matrix")
+    if (!taxa_are_rows(phy_sub)) otu <- t(otu)
+    if (ncol(otu) != 1) stop("plot_single_sample_presence attend exactement 1 sample.")
+
+    prev01 <- as.numeric(otu[, 1] >= detection)
+    keep <- rownames(otu)[prev01 > 0]
+    if (length(keep) == 0) return(NULL)
+
+    df <- data.frame(
+      OTU = factor(keep, levels = rev(keep)),
+      Detection = factor(as.character(detection), levels = as.character(detection)),
+      Prevalence = 1
+    )
+
+    ggplot2::ggplot(df, ggplot2::aes(x = Detection, y = OTU, fill = Prevalence)) +
+      ggplot2::geom_tile() +
+      ggplot2::scale_fill_gradientn(
+        colours = rev(RColorBrewer::brewer.pal(5, "Spectral")),
+        limits = c(0, 1),
+        breaks = c(0, 1),
+        guide = "none"
+      ) +
+      ggplot2::scale_x_discrete(labels = format_x_4dp) +
+      ggplot2::labs(title = title_text) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold", size = 10, hjust = 0.5),
+        axis.title.y = ggplot2::element_blank(),
+        axis.text.y  = ggplot2::element_text(size = 6),
+        axis.ticks.y = ggplot2::element_blank(),
+        axis.title.x = ggplot2::element_blank(),
+        axis.text.x  = ggplot2::element_text(angle = 45, hjust = 1)
+      )
+  }
+
+  core_otus_by_group <- list()
+  core_otus_all <- character(0)
+  groups_used <- character(0)
+
+  # 1) calculate core by (HostSpecies x Origin)
+  for (host in ordered_HostSpecies) {
+    for (org in origin_levels) {
+
+      phy_sub <- subset_host_origin(merged.comp, host, org)
+      n_s <- nsamples(phy_sub)
+
+      if (n_s >= 1) {
+        if (n_s > 1) {
+          core_phy <- microbiome::core(phy_sub, detection = 0.001, prevalence = 0.5)
+          otus <- taxa_names(core_phy)
+        } else {
+          otu <- as(otu_table(phy_sub), "matrix")
+          if (!taxa_are_rows(phy_sub)) otu <- t(otu)
+          otus <- rownames(otu)[otu[, 1] >= 0.001]
+        }
+
+        key <- paste(host, org, sep = " | ")
+        core_otus_by_group[[key]] <- otus
+        groups_used <- c(groups_used, key)
+
+        if (length(otus) > 0) core_otus_all <- union(core_otus_all, otus)
+      }
+    }
+  }
+
+  # 2) Heatmaps
+  core_plots <- list()
+
+  for (key in groups_used) {
+
+    host <- strsplit(key, " \\| ")[[1]][1]
+    org  <- strsplit(key, " \\| ")[[1]][2]
+
+    phy_sub <- subset_host_origin(merged.comp, host, org)
+    n_s <- nsamples(phy_sub)
+    if (n_s == 0) next
+
+    title_text <- paste0(host, " (", org, ")\n(", n_s, " pools)")
+    otus <- core_otus_by_group[[key]]
+
+    if (n_s > 1) {
+
+      if (length(otus) > 0) {
+
+        phy_plot <- prune_taxa(otus, phy_sub)
+
+        title_text2 <- paste0(host, " (", org, ")\n(",
+                              nsamples(phy_plot), " pools - ", ntaxa(phy_plot), " OTUs)")
+
+        p <- microbiome::plot_core(
+          phy_plot,
+          plot.type      = "heatmap",
+          prevalences    = prevalences,
+          detections     = detections,
+          min.prevalence = 0.5,
+          colours        = rev(RColorBrewer::brewer.pal(5, "Spectral"))
+        ) +
+          ggplot2::scale_fill_gradientn(
+            colours = rev(RColorBrewer::brewer.pal(5, "Spectral")),
+            limits  = c(0, 1),
+            guide   = "none"
+          ) +
+          ggplot2::scale_x_discrete(labels = format_x_4dp) +
+          ggplot2::labs(title = title_text2) +
+          ggplot2::theme(
+            plot.title = ggplot2::element_text(face = "bold", size = 10, hjust = 0.5),
+            axis.title.y = ggplot2::element_blank(),
+            axis.text.y  = ggplot2::element_text(size = 6),
+            axis.ticks.y = ggplot2::element_blank(),
+            axis.title.x = ggplot2::element_blank(),
+            axis.text.x  = ggplot2::element_text(angle = 45, hjust = 1)
+          )
+
+        # >>> delting useless taxa (prevalence=0 partout)
+        p2 <- drop_all_zero_prevalence_from_plot(p)
+
+        if (is.null(p2)) {
+          df0 <- data.frame(x = 1, y = 1, z = 0)
+          p <- ggplot2::ggplot(df0, ggplot2::aes(x, y, fill = z)) +
+            ggplot2::geom_tile() +
+            ggplot2::scale_fill_gradient(limits = c(0, 1), guide = "none") +
+            ggplot2::labs(title = paste0(title_text, "\n(aucun OTU utile: prevalence=0 partout)")) +
+            ggplot2::theme_void() +
+            ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = 10, hjust = 0.5))
+        } else {
+          p <- p2
+        }
+
+      } else {
+        df0 <- data.frame(x = 1, y = 1, z = 0)
+        p <- ggplot2::ggplot(df0, ggplot2::aes(x, y, fill = z)) +
+          ggplot2::geom_tile() +
+          ggplot2::scale_fill_gradient(limits = c(0, 1), guide = "none") +
+          ggplot2::labs(title = paste0(title_text, "\n(0 OTU core)")) +
+          ggplot2::theme_void() +
+          ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = 10, hjust = 0.5))
+      }
+
+    } else {
+      # nsamples == 1
+      p <- plot_single_sample_presence(phy_sub, paste0(title_text, "\n(binary prevalence)"), detection = 0.001)
+
+      if (is.null(p)) {
+        df0 <- data.frame(x = 1, y = 1, z = 0)
+        p <- ggplot2::ggplot(df0, ggplot2::aes(x, y, fill = z)) +
+          ggplot2::geom_tile() +
+          ggplot2::scale_fill_gradient(limits = c(0, 1), guide = "none") +
+          ggplot2::labs(title = paste0(title_text, "\n(aucun OTU >= 0.001)")) +
+          ggplot2::theme_void() +
+          ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = 10, hjust = 0.5))
+      }
+    }
+
+    core_plots[[key]] <- p
+  }
+
+  heatmap_combined <- NULL
+  if (length(core_plots) == 0) {
+    message(prefix, " : aucun groupe (HostSpecies x Origin) trouvé.")
+  } else {
+    ordered_groups <- c()
+    for (host in ordered_HostSpecies) {
+      for (org in origin_levels) {
+        k <- paste(host, org, sep = " | ")
+        if (k %in% names(core_plots)) ordered_groups <- c(ordered_groups, k)
+      }
+    }
+    core_plots <- core_plots[ordered_groups]
+
+    heatmap_combined <- patchwork::wrap_plots(core_plots, ncol = length(origin_levels))
+    print(heatmap_combined)
+  }
+
+  return(list(
+    prefix = prefix,
+    common_hosts = common_hosts,
+    merged.species = merged.species,
+    merged.compositional = merged.comp,
+    core_otus_by_group = core_otus_by_group,
+    core_otus_all = core_otus_all,
+    heatmap = heatmap_combined
+  ))
+}
+
+
+core_comparison_16s <- core_filteredVScore(prefix = "16s",
+                                           physeq_file = "Clean_phyloseq_16S.rds",
+                                           physeq_filtered = "filtered_out_16S.rds",
+                                           invasive_core = "otus_invasive_only_16S.rds",
+                                           native_core = "otus_native_only_16S.rds")
+
+
+core_comparison_ITS <- core_filteredVScore(prefix="OL4",
+                                           physeq_file = "Clean_phyloseq_OL4.rds",
+                                           physeq_filtered = "filtered_out_OL4.rds",
+                                           invasive_core = "otus_invasive_only_OL4.rds",
+                                           native_core = "otus_native_only_OL4.rds")
+
+
+
+ggplot2::ggsave(
+  filename = "core_comparison_16s.pdf",
+  plot = core_comparison_16s$heatmap,
+  width = 14, height = 8, units = "in"
+)
+
+ggplot2::ggsave(
+  filename = "core_comparison_OL4.pdf",
+  plot = core_comparison_16s$heatmap,
+  width = 14, height = 8, units = "in", dpi = 300
+)
+
+################################################## Bibliography ####################################################################
+
+################# import data as individual phyloseq 
+make_phyloseq_from_files <- function(metadata_file,
+                                     otu_file,
+                                     tax_file,
+                                     sep_otu = "\t",
+                                     sep_tax = "\t") {
+
+ 
+  otu_df <- read.delim(otu_file, sep = sep_otu, header = TRUE, check.names = FALSE) #OTU_table
+  otu_mat <- as.matrix(column_to_rownames(otu_df, var = colnames(otu_df)[1]))
+  OTU <- otu_table(otu_mat, taxa_are_rows = TRUE)
+
+  
+  meta_df <- read.csv(metadata_file, header = TRUE, check.names = FALSE, stringsAsFactors = FALSE) #metadata
+  meta_df <- meta_df[, -1]
+  meta_mat <- meta_df
+  meta_mat <- column_to_rownames(meta_mat, var = colnames(meta_mat)[1])
+
+
+  samples_otu <- sample_names(OTU) # Harmonization
+  samples_meta <- rownames(meta_mat)
+  common_samples <- intersect(samples_otu, samples_meta)
+
+  if (length(common_samples) == 0) {
+    stop("Aucun échantillon en commun entre OTU table et metadata. Vérifie la colonne ID.")
+  }
+
+  meta_mat2 <- meta_mat[common_samples, , drop = FALSE] # filter and order metadata following OTU table order
+  SD <- sample_data(meta_mat2)
+
+  OTU2 <- prune_samples(common_samples, OTU) # Filter OTU table with common OTUs 
+
+
+  tax_df <- read.delim(tax_file, sep = sep_tax, header = TRUE, check.names = FALSE) #Tax_table
+  tax_mat <- as.matrix(column_to_rownames(tax_df, var = colnames(tax_df)[1]))
+  TAX <- tax_table(tax_mat)
+
+  common_taxa <- intersect(taxa_names(OTU2), taxa_names(TAX)) # Harmonization taxa: Keep only taxa detected in OTU
+  if (length(common_taxa) == 0) {
+    stop("Aucun taxon en commun entre OTU table et tax table. Vérifie les IDs OTU/ASV.")
+  }
+
+  OTU3 <- prune_taxa(common_taxa, OTU2)
+  TAX2 <- TAX[common_taxa, ]
+
+
+  ps <- phyloseq(OTU3, SD, TAX2) # Build phyloseq
+
+  # resume
+  message("OK: ", nsamples(ps), " samples | ", ntaxa(ps), " taxa")
+  return(ps)
+}
+
+# ------------------------------------------------------------
+# Standardize Species for bibliographical comparison
+# - NA / vide -> "Unassigned"
+# - All variant of "Unknown" -> "Unclassified"
+# - All variant of "Unknown species" -> "Unclassified species"
+# ------------------------------------------------------------
+standardize_species_labels_biblio <- function(species_vec) {
+  species_vec <- as.character(species_vec)
+  species_vec[is.na(species_vec) | trimws(species_vec) == ""] <- "Unassigned"
+  species_vec <- trimws(species_vec)
+
+  is_unknown_species <- function(x) {
+    grepl("^unknown[ _.-]*species$", x, ignore.case = TRUE)
+  }
+
+  is_unknown_only <- function(x) {
+    grepl("^unknown$", x, ignore.case = TRUE)
+  }
+
+  species_vec[is_unknown_species(species_vec)] <- "Unclassified species"
+  species_vec[is_unknown_only(species_vec)]    <- "Unclassified"
+
+  species_vec
+}
+
+
+hilu.staubach <- make_phyloseq_from_files(
+  metadata_file = "Staubach_MetaData.csv",
+  otu_file      = "Staubach_OTU_table_without_chim.tsv",
+  tax_file      = "Staubach_tax_table.tsv",
+  sep_otu = "\t",
+  sep_tax = "\t"
+)
+
+hilu.wang <- make_phyloseq_from_files(
+  metadata_file = "Wang_metadata.csv",
+  otu_file      = "Wang_OTU_table_without_chim.tsv",
+  tax_file      = "Wang_tax_table.tsv",
+  sep_otu = "\t",
+  sep_tax = "\t"
+)
+
+hilu.brown <- make_phyloseq_from_files(
+  metadata_file = "Brown_metadata.csv",
+  otu_file      = "Brown_OTU_table_without_chim.tsv",
+  tax_file      = "Brown_tax_table.tsv",
+  sep_otu = "\t",
+  sep_tax = "\t"
+)
+
+hilu <- readRDS("Clean_phyloseq_16S.rds")
+
+#################### Rename OTUs before fusion
+
+
+prefix_taxa <- function(ps, prefix) {  #Rename OTUs/ASVs in phyloseq by adding dataset initial
+  stopifnot(inherits(ps, "phyloseq"))
+  stopifnot(is.character(prefix), length(prefix) == 1)
+
+  old_ids <- taxa_names(ps)
+  new_ids <- paste0(prefix, old_ids)
+
+
+  if (any(duplicated(new_ids))) { # Security against duplicate
+    stop("Le préfixe crée des doublons d'OTU. Exemple: ", new_ids[which(duplicated(new_ids))[1]])
+  }
+
+  
+  taxa_names(ps) <- new_ids # Rename everywhere in phyloseq
+
+  
+  if (!is.null(tax_table(ps, errorIfNULL = FALSE))) { # Check
+    if (!setequal(taxa_names(ps), taxa_names(tax_table(ps)))) {
+      
+      warning("Les taxa de l'OTU table et de la tax_table ne correspondent pas parfaitement après renommage.")
+    }
+  }
+
+  return(ps)
+}
+
+# Application
+hilu.staubach <- prefix_taxa(hilu.staubach, "S")  # ex: C1 -> SC1
+hilu.brown    <- prefix_taxa(hilu.brown,    "B")  # ex: C1 -> BC1
+hilu.wang     <- prefix_taxa(hilu.wang,     "W")  # ex: C1 -> WC1
+hilu          <- prefix_taxa(hilu,          "T") # ex: C1 -> TC1
+
+################## homogeinise dataset and merge_phyloseq
+
+
+## Staubach et al.
+hilu.staubach <- subset_samples(hilu.staubach, last_meal != "Lab-food") #Delete lab sample
+hilu.staubach <- prune_taxa(taxa_sums(hilu.staubach) > 0, hilu.staubach) #clean taxa with 0 abundance and prevalence after subset_sample
+sd <- as.data.frame(sample_data(hilu.staubach)) #extract sam_data
+sd$location <- "USA" # Replace location values by "North America"
+sd$last_meal <- NULL # Delete last_meal
+names(sd)[names(sd) == "location"] <- "Locality" #rename column
+names(sd)[names(sd) == "host_species"] <- "HostSpecies"
+
+sample_data(hilu.staubach) <- sample_data(sd) # Add new sam_data to phyloseq object
+
+
+
+##Brown et al.
+hilu.brown <- subset_samples(hilu.brown, !is.na(HostSpecies) & HostSpecies != "")
+sd <- sample_data(hilu.brown) #extract sample data
+sd$HostSpecies <- sub( #modify HostSpecies format
+  "^([A-Za-z])[a-z]+\\s+([a-z]+)$",
+  "\\1.\\2",
+  sd$HostSpecies
+)
+sample_data(hilu.brown) <- sd # replace metadata in phyloseq
+
+## Wang et al. 
+sd <- as.data.frame(sample_data(hilu.wang)) # Extract sample_data
+if ("Collection_Date" %in% colnames(sd)) { # Delete Collection_Date
+  sd$Collection_Date <- NULL
+}
+sd$HostSpecies <- "D.melanogaster" # Add HostSpecies column
+sd$Locality <- ifelse(sd$Locality == "USA", # Rename Locality values
+                      "USA", # "USA" -> "North America"
+                      "Europe") # everything except "USA" -> "Europe"
+sample_data(hilu.wang) <- sample_data(sd) # Add new sam_data to phyloseq object
+
+
+
+## My data
+sd <- sample_data(hilu)
+sd <- sd[, !colnames(sd) %in% c("Sample_ID", "Group")] # delete useless column
+colnames(sd)[colnames(sd) == "Category"] <- "Class" #change column name to fit with other
+sd$Locality <- "French Guiana" # Replace precise locality by more general locality
+sd <- sd[, c("Locality", setdiff(colnames(sd), "Locality"))] #Reorder
+hs <- as.character(sd$HostSpecies)
+sd$Class <- dplyr::case_when(
+  hs %in% c("D. paulistorum", "Willistoni sp.") ~ "willistoni group",
+  hs == "D. sturtevanti"                        ~ "D. sturtevanti",
+  TRUE                                          ~ as.character(sd$Class)  # keep existing value
+)
+sample_data(hilu) <- sd
+
+
+
+#Add class to the three biblio phyloseq
+add_class <- function(ps) {
+  sd <- sample_data(ps)
+  hs <- as.character(sd$HostSpecies)
+
+  sd$Class <- dplyr::case_when(
+    hs %in% c("D.melanogaster", "D.simulans") ~ "melanogaster group",
+    hs %in% c("D.sulfurigaster", "D.rubida", "D.pallidifrons") ~ "immigrans group",
+    hs == "D.pseudoananassae" ~ "D. pseudoananassae",
+    TRUE ~ NA_character_   # in case there is other species
+  )
+  sample_data(ps) <- sd
+  ps
+}
+hilu.wang     <- add_class(hilu.wang)
+hilu.staubach <- add_class(hilu.staubach)
+hilu.brown    <- add_class(hilu.brown)
+
+
+#merge phyloseq
+hilu.all <- merge_phyloseq(hilu.wang, hilu.brown, hilu.staubach, hilu)
+
+######### Import OTUs list 
+
+Common_core <- readRDS("otus_communs_16s.rds")
+Invasive_core <- readRDS("otus_invasive_only_16S.rds")
+Native_core <- readRDS("otus_native_only_16S.rds")
+Other_core <- readRDS("otus_other_16S.rds")
+
+# delete numerotation, standardiser Unknown -> Unclassified, trim et deduplicate
+Common_core <- Common_core %>%
+  gsub("[_ ]?[0-9]+$", "", .) %>%
+  standardize_species_labels_biblio() %>%
+  trimws() %>%
+  unique()
+
+Invasive_core <- Invasive_core %>%
+  gsub("[_ ]?[0-9]+$", "", .) %>%
+  standardize_species_labels_biblio() %>%
+  trimws() %>%
+  unique()
+
+Native_core <- Native_core %>%
+  gsub("[_ ]?[0-9]+$", "", .) %>%
+  standardize_species_labels_biblio() %>%
+  trimws() %>%
+  unique()
+
+Other_core <- Other_core %>%
+  gsub("[_ ]?[0-9]+$", "", .) %>%
+  standardize_species_labels_biblio() %>%
+  trimws() %>%
+  unique()
+
+
+Common_core
+Invasive_core
+Native_core
+Other_core
+
+
+
+######### Representation
+
+#------------------------------------------------------------
+# 1) build "core set" and assign group
+#------------------------------------------------------------
+Common_core   <- trimws(Common_core)
+Invasive_core <- trimws(Invasive_core)
+Native_core   <- trimws(Native_core)
+Other_core    <- trimws(Other_core)
+
+core_taxa <- unique(c(Common_core, Invasive_core, Native_core, Other_core))
+
+core_df <- tibble::tibble(OTU = core_taxa) %>%
+  dplyr::mutate(group = dplyr::case_when(
+    OTU %in% Common_core   ~ "Common",
+    OTU %in% Native_core   ~ "Native",
+    OTU %in% Invasive_core ~ "Invasive",
+    OTU %in% Other_core    ~ "Other",
+    TRUE ~ "Other"
+  )) %>%
+  dplyr::mutate(group = factor(group, levels = c("Common", "Native", "Invasive", "Other")))
+
+group_colors <- c(
+  "Common"   = "#556B2F",
+  "Invasive" = "#882255",
+  "Native"   = "#0000CD",
+  "Other"    = "black"
+)
+
+#------------------------------------------------------------
+# 1bis) Standardize Species and agglomerate at species level
+#------------------------------------------------------------
+tax_all <- as.data.frame(phyloseq::tax_table(hilu.all))
+tax_all$Species <- standardize_species_labels_biblio(tax_all$Species)
+phyloseq::tax_table(hilu.all) <- phyloseq::tax_table(as.matrix(tax_all))
+
+hilu.sp <- phyloseq::tax_glom(hilu.all, taxrank = "Species", NArm = FALSE)
+
+tax <- as.data.frame(phyloseq::tax_table(hilu.sp))
+sp_names <- as.character(tax$Species)
+sp_names <- standardize_species_labels_biblio(sp_names)
+sp_names[is.na(sp_names) | sp_names == ""] <- paste0(
+  "Unclassified_Species_",
+  seq_len(sum(is.na(sp_names) | sp_names == ""))
+)
+sp_names <- make.unique(sp_names)
+phyloseq::taxa_names(hilu.sp) <- sp_names
+
+#------------------------------------------------------------
+# 2) Relative Abundance + format long
+#------------------------------------------------------------
+ps_rel <- phyloseq::transform_sample_counts(hilu.sp, function(x) x / sum(x))
+
+# facets order
+locclass_order <- c(
+  "French Guiana - Invasive",
+  "Europe - melanogaster group",
+  "USA - melanogaster group",
+  "Australia - D. pseudoananassae",
+  "Australia - immigrans group",
+  "French Guiana - willistoni group",
+  "French Guiana - D. sturtevanti"
+)
+
+df_long <- phyloseq::psmelt(ps_rel) %>%
+  dplyr::mutate(
+    Locality = as.character(Locality),
+
+    # sample_data class
+    Class    = as.character(sample_Class),
+
+    LocClass = paste(Locality, Class, sep = " - "),
+    LocClass = factor(LocClass, levels = locclass_order)
+  ) %>%
+  dplyr::filter(OTU %in% core_taxa)
+
+#------------------------------------------------------------
+# 3) abundance & prevalence thresholds 
+#------------------------------------------------------------
+t_max <- 0.05
+n_steps <- 60
+thresholds <- seq(0, t_max, length.out = n_steps)
+
+prev_df <- df_long %>%
+  dplyr::select(LocClass, OTU, Sample, Abundance) %>%
+  dplyr::distinct() %>%
+  dplyr::group_by(LocClass, OTU) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(prev_tbl = purrr::map(data, ~{
+    a <- .x$Abundance
+    tibble::tibble(
+      thresh = thresholds,
+      prevalence = vapply(thresholds, function(t) mean(a >= t, na.rm = TRUE), numeric(1))
+    )
+  })) %>%
+  dplyr::select(-data) %>%
+  tidyr::unnest(prev_tbl) %>%
+  dplyr::ungroup()
+
+# Identify line with prevalence = 0 for the minimal abundance:
+
+grey_rows <- prev_df %>%
+  dplyr::filter(thresh == 0) %>%
+  dplyr::transmute(
+    LocClass,
+    OTU,
+    absent_all = prevalence == 0
+  )
+
+#------------------------------------------------------------
+# 4) global OTUs Order 
+#------------------------------------------------------------
+mean_global <- df_long %>%
+  dplyr::group_by(OTU) %>%
+  dplyr::summarise(mean_abund_global = mean(Abundance, na.rm = TRUE), .groups = "drop")
+
+otu_map <- core_df %>%
+  dplyr::left_join(mean_global, by = "OTU") %>%
+  dplyr::mutate(mean_abund_global = ifelse(is.na(mean_abund_global), 0, mean_abund_global)) %>%
+  dplyr::arrange(group, dplyr::desc(mean_abund_global)) %>%
+  dplyr::mutate(
+    otu_label = sprintf(
+      "<span style='color:%s'>%s</span>",
+      group_colors[as.character(group)], OTU
+    )
+  )
+
+y_levels <- otu_map$otu_label
+
+prev_df <- prev_df %>%
+  dplyr::left_join(otu_map %>% dplyr::select(OTU, group, otu_label), by = "OTU") %>%
+  dplyr::mutate(OTU_ord = factor(otu_label, levels = y_levels))
+
+#------------------------------------------------------------
+# 5) Tiles
+#------------------------------------------------------------
+prev_df <- prev_df %>%
+  dplyr::left_join(grey_rows, by = c("LocClass", "OTU")) %>%
+  dplyr::mutate(absent_all = ifelse(is.na(absent_all), FALSE, absent_all)) %>%
+  dplyr::group_by(LocClass, OTU) %>%
+  dplyr::arrange(thresh, .by_group = TRUE) %>%
+  dplyr::mutate(
+    x0 = thresh,
+    x1 = dplyr::lead(thresh)
+  ) %>%
+  dplyr::filter(!is.na(x1)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+    x_mid = (x0 + x1) / 2,
+    x_w   = (x1 - x0)
+  )
+
+# grey tiles if taxa abscente evrywhere
+grey_tiles <- prev_df %>%
+  dplyr::filter(absent_all, x1 > 0.001) %>%
+  dplyr::mutate(
+    x0_plot  = pmax(x0, 0.001),
+    x1_plot  = x1,
+    x_mid    = (x0_plot + x1_plot) / 2,
+    x_w      = (x1_plot - x0_plot)
+  ) %>%
+  dplyr::filter(x_w > 0)
+
+# colored tiles
+color_tiles <- prev_df %>%
+  dplyr::filter(!absent_all, x1 > 0.001) %>%
+  dplyr::mutate(
+    x0_plot  = pmax(x0, 0.001),
+    x1_plot  = x1,
+    x_mid    = (x0_plot + x1_plot) / 2,
+    x_w      = (x1_plot - x0_plot)
+  ) %>%
+  dplyr::filter(x_w > 0)
+
+#------------------------------------------------------------
+# 6) Plot
+#------------------------------------------------------------
+p <- ggplot() +
+  geom_tile(
+    data = grey_tiles,
+    aes(x = x_mid, y = OTU_ord, width = x_w),
+    height = 0.75,
+    fill = "grey85"
+  ) +
+  geom_tile(
+    data = color_tiles,
+    aes(x = x_mid, y = OTU_ord, fill = prevalence, width = x_w),
+    height = 0.75
+  ) +
+  facet_wrap(
+    ~ LocClass,
+    nrow = 1,
+    labeller = ggplot2::labeller(
+      LocClass = function(x) gsub(" - ", "\n", x)
+    )
+  ) +
+  scale_x_continuous(
+    limits = c(0.001, t_max),
+    breaks = seq(0.001, t_max, length.out = 6),
+    labels = scales::label_number(accuracy = 0.0001, trim = TRUE)
+  ) +
+  scale_fill_gradientn(
+    colours = c("#5B8DB8", "#D9EF8B", "#FEE08B", "#E9B44C", "#D32F2F"),
+    values  = c(0, 0.25, 0.5, 0.75, 1),
+    limits  = c(0, 1),
+    breaks  = c(0, 0.25, 0.5, 0.75, 1),
+    labels  = scales::label_number(accuracy = 0.01, trim = TRUE)
+  ) +
+  labs(
+    x = "Abondance threshold",
+    y = NULL,
+    fill = "Prévalence"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.text.y = ggtext::element_markdown(size = 13),
+    strip.text  = element_text(face = "bold", size = 13),
+    panel.spacing.x = unit(0.05, "lines"),
+    plot.margin = margin(t = 5.5, r = 5.5, b = 5.5, l = 55)
+  )
+
+ggsave("core_biblio.pdf", plot = p, device = "pdf", width = 18, height = 10, units = "in")
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
