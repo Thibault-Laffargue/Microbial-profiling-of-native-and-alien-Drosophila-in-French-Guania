@@ -51,3 +51,5 @@ Next steps will be done on Rstudio.
 6. Run `4.2-Pool_investigation.Rmd`, this script clarify pool composition for the pool with a suspect class composition.
 7. Run `5-Core_microbiome.Rmd`, this script allow to describe core microbiome compoistion and to identify taxa unevenly distributed between Invasive alien Drosophila and Native Drosophila.
 8. Run `6-comparison.Rmd`, this script allow comparison of the data first with excluded data in order to verify if mistake was made and then to reference dataset. The reference dataset is build with Staubach et al. (2013), Wang et al. (2020), and Brown et al. (2023) dataset.
+
+**Note:** The file `Miss_identify_sample.xlsx`is a results of COI analyses. 
