@@ -22,6 +22,8 @@ In a terminal run Sequence_moving_script.
 
 ### Bacterial 16s rRNA
 
+![Workflow](Pipeline_Logigram.png)
+
 1. Open the folder `bacterial_16s_rRNA_metabarcoding`
 2. In a terminal run `Pipeline_part1`
 3. In Rstudio run Stats_N_reads.R
