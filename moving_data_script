@@ -1,0 +1,12 @@
+shopt -s nullglob
+
+# Fichiers B*.fastq.gz
+for f in B*.fastq.gz; do
+    mv "$f" Drosophila_community_analyses/
+done
+
+# Tous les autres *.fastq.gz
+for f in *.fastq.gz; do
+    [[ "$f" == B*.fastq.gz ]] && continue
+    mv "$f" Microbiome_analyses/
+done
