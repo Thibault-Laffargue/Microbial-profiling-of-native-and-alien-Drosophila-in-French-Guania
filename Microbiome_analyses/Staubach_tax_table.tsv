@@ -1,0 +1,155 @@
+Cluster	Kingdom	Phylum	Class	Order	Family	Genus	Species
+C1	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C2	Bacteria	Pseudomonadota	Gammaproteobacteria	Lysobacterales	Lysobacteraceae	Stenotrophomonas	Stenotrophomonas sp.
+C3	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacter	Acetobacter sp.
+C4	Bacteria	Campylobacterota	Campylobacteria	Campylobacterales	Helicobacteraceae	Helicobacter	Helicobacter apodemus
+C5	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Oxalobacteraceae	Herbaspirillum	Herbaspirillum sp.
+C6	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C7	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactiplantibacillus	Lactiplantibacillus sp.
+C8	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactobacillus	Lactobacillus sp.
+C9	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Bacteroidaceae	Bacteroides	Bacteroides sp.
+C10	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacteraceae sp.	Acetobacteraceae sp.
+C11	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactiplantibacillus	Lactiplantibacillus sp.
+C14	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Bacteroidaceae	Bacteroides	uncultured bacterium
+C15	Bacteria	Bacillota	Clostridia	Lachnospirales	Lachnospiraceae	[Ruminococcus] gnavus group	uncultured bacterium
+C16	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Levilactobacillus	Lactobacillus brevis
+C19	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Limnohabitans	Limnohabitans sp.
+C21	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Acidovorax	Acidovorax sp.
+C22	Bacteria	Bacillota	Clostridia	Oscillospirales	Ruminococcaceae	Faecalibacterium	uncultured bacterium
+C23	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Microbacteriaceae	Microbacteriaceae sp.	Microbacteriaceae sp.
+C24	Bacteria	Pseudomonadota	Alphaproteobacteria	Sphingomonadales	Sphingomonadaceae	Sphingomonadaceae sp.	Sphingomonadaceae sp.
+C25	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacteraceae sp.	Acetobacteraceae sp.
+C27	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Bacteroidaceae	Bacteroides	Bacteroides sp.
+C28	Bacteria	Pseudomonadota	Alphaproteobacteria	Hyphomicrobiales	Beijerinckiaceae	Methylorubrum	Methylorubrum sp.
+C30	Bacteria	Pseudomonadota	Alphaproteobacteria	Hyphomicrobiales	Xanthobacteraceae	Rhodopseudomonas	uncultured bacterium
+C31	Bacteria	Pseudomonadota	Gammaproteobacteria	Pseudomonadales	Moraxellaceae	Acinetobacter	Acinetobacter sp.
+C32	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacter	Acetobacter sp.
+C33	Bacteria	Bacteroidota	Bacteroidia	Flavobacteriales	Flavobacteriaceae	Flavobacterium	Flavobacterium sp.
+C34	Bacteria	Bacillota	Clostridia	Lachnospirales	Lachnospiraceae	Lachnospiraceae sp.	Lachnospiraceae sp.
+C35	Bacteria	Patescibacteria	Parcubacteria	Candidatus Kaiserbacteria	Incertae Sedis	Incertae Sedis	uncultured bacterium
+C36	Bacteria	Bacteroidota	Bacteroidia	Flavobacteriales	Weeksellaceae	Cloacibacterium	uncultured bacterium
+C37	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Burkholderiaceae	Burkholderia-Caballeronia-Paraburkholderia	Paraburkholderia ferrariae
+C38	Bacteria	Actinomycetota	Actinobacteria	Incertae Sedis	Incertae Sedis	Incertae Sedis	metagenome
+C39	Bacteria	Pseudomonadota	Alphaproteobacteria	Caulobacterales	Caulobacteraceae	Caulobacter	Caulobacter sp.
+C40	Bacteria	Bacillota	Bacilli	Lactobacillales	Streptococcaceae	Streptococcus	Streptococcus sp.
+C41	Bacteria	Bacillota	Bacilli	Paenibacillales	Paenibacillaceae	Paenibacillus	Paenibacillus glucanolyticus
+C42	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Roseateles	uncultured bacterium
+C43	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C45	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Microbacteriaceae	Microbacterium	Microbacterium sp.
+C46	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C47	Bacteria	Actinomycetota	Actinobacteria	Propionibacteriales	Propionibacteriaceae	Cutibacterium	Cutibacterium sp.
+C49	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Micrococcaceae	Micrococcaceae sp.	Micrococcaceae sp.
+C51	Bacteria	Bacillota	Bacilli	Erysipelotrichales	Erysipelatoclostridiaceae	Coprobacillus	Coprobacillus sp.
+C52	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Gluconobacter	Gluconobacter sp.
+C53	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C54	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Yersiniaceae	Yersiniaceae sp.	Yersiniaceae sp.
+C55	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C57	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Sutterellaceae	Sutterella	Sutterella sp.
+C59	Bacteria	Pseudomonadota	Gammaproteobacteria	Gammaproteobacteria sp.	Gammaproteobacteria sp.	Gammaproteobacteria sp.	Gammaproteobacteria sp.
+C61	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Alcaligenaceae	Achromobacter	Achromobacter sp.
+C62	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Bacteroidaceae	Bacteroides	uncultured bacterium
+C65	Bacteria	Pseudomonadota	Alphaproteobacteria	Rhodobacterales	Paracoccaceae	Paracoccaceae sp.	Paracoccaceae sp.
+C67	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactiplantibacillus	Lactiplantibacillus sp.
+C68	Bacteria	Cyanobacteriota	Cyanobacteriia	Chloroplast	Incertae Sedis	Incertae Sedis	Incertae Sedis sp.
+C70	Bacteria	Bacteroidota	Bacteroidia	Cytophagales	Spirosomataceae	Sandaracinomonas	uncultured bacterium
+C77	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Oxalobacteraceae	Undibacterium	uncultured bacterium
+C79	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C82	Bacteria	Pseudomonadota	Gammaproteobacteria	Lysobacterales	Rhodanobacteraceae	Frateuria	Frateuria aurantia
+C85	Bacteria	Bacillota	Bacilli	Lactobacillales	Streptococcaceae	Lactococcus	Lactococcus sp.
+C86	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Leuconostoc	Leuconostoc sp.
+C87	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Enterobacterales sp.	Enterobacterales sp.	Enterobacterales sp.
+C88	Bacteria	Actinomycetota	Actinobacteria	Mycobacteriales	Nocardiaceae	Rhodococcus	Rhodococcus sp.
+C90	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Liquorilactobacillus	Lactobacillus nagelii
+C91	Bacteria	Bacillota	Bacilli	Lactobacillales	Enterococcaceae	Enterococcus	Heliconius elevatus
+C93	Bacteria	Bacteroidota	Bacteroidia	Chitinophagales	Chitinophagaceae	DVSBS1	Sphingobacteriia bacterium DVSBS1
+C96	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Dysgonomonadaceae	Dysgonomonadaceae sp.	Dysgonomonadaceae sp.
+C97	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C98	Bacteria	Pseudomonadota	Gammaproteobacteria	Pseudomonadales	Pseudomonadaceae	Pseudomonas	Pseudomonas sp.
+C99	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Fructilactobacillus	uncultured Lactobacillus sp.
+C100	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Neisseriaceae	Neisseriaceae sp.	Neisseriaceae sp.
+C101	Bacteria	Pseudomonadota	Gammaproteobacteria	Pseudomonadales	Pseudomonadaceae	Pseudomonas	Pseudomonas sp.
+C102	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Fructilactobacillus	Fructilactobacillus sp.
+C103	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Weissella	uncultured bacterium
+C104	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C106	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Comamonas	Comamonas sp.
+C107	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Periweissella	Weissella ghanensis
+C108	Bacteria	Pseudomonadota	Alphaproteobacteria	Hyphomicrobiales	Devosiaceae	Devosia	Devosia sp.
+C109	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Fructilactobacillus	Fructilactobacillus sp.
+C110	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Variovorax	Variovorax sp.
+C111	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacter	Acetobacter sp.
+C113	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Leuconostoc	Leuconostoc sp.
+C114	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Burkholderiaceae	Ralstonia	Ralstonia sp.
+C115	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Fructobacillus	Fructobacillus pseudoficulneus
+C116	Bacteria	Actinomycetota	Actinobacteria	Mycobacteriales	Corynebacteriaceae	Corynebacterium	Corynebacterium sp.
+C117	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Microbacteriaceae	Leucobacter	Leucobacter sp. CBX152
+C118	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Morganellaceae	Morganella	Morganella sp.
+C119	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Yersiniaceae	Yersiniaceae sp.	Yersiniaceae sp.
+C121	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Orbaceae	Orbus	Orbus sp.
+C122	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C123	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Fructilactobacillus	Fructilactobacillus sp.
+C124	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C126	Bacteria	Patescibacteria	Saccharimonadia	Saccharimonadales	Saccharimonadaceae	TM7a	uncultured bacterium
+C128	Bacteria	Bacillota	Clostridia	Oscillospirales	Ruminococcaceae	Acutalibacter	uncultured bacterium
+C130	Bacteria	Bacteroidota	Bacteroidia	Flavobacteriales	Weeksellaceae	Empedobacter	uncultured bacterium
+C135	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Microbacteriaceae	Curtobacterium	Curtobacterium sp. 9128
+C136	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C141	Bacteria	Bacteroidota	Bacteroidia	Cytophagales	Spirosomataceae	Persicitalea	uncultured bacterium
+C142	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C143	Bacteria	Bacteroidota	Bacteroidia	Cytophagales	Spirosomataceae	Leadbetterella	Leadbetterella sp.
+C145	Bacteria	Actinomycetota	Actinobacteria	Kitasatosporales	Streptomycetaceae	Streptomyces	Streptomyces sp. CLI2509
+C151	Bacteria	Pseudomonadota	Alphaproteobacteria	Caulobacterales	Caulobacteraceae	Caulobacteraceae sp.	Caulobacteraceae sp.
+C158	Bacteria	Actinomycetota	Actinobacteria	Frankiales	Sporichthyaceae	hgcI clade	hgcI clade sp.
+C160	Bacteria	Pseudomonadota	Alphaproteobacteria	Hyphomicrobiales	Rhizobiaceae	Brucella	Brucella sp.
+C162	Bacteria	Bacillota	Clostridia	Clostridiales	Clostridiaceae	Clostridium	uncultured bacterium
+C169	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Enterobacterales sp.	Enterobacterales sp.	Enterobacterales sp.
+C171	Bacteria	Bacteroidota	Bacteroidia	Sphingobacteriales	Sphingobacteriaceae	Sphingobacterium	Sphingobacterium sp.
+C173	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C177	Bacteria	Bacillota	Clostridia	Peptostreptococcales-Tissierellales	Peptostreptococcaceae	Peptostreptococcaceae sp.	Peptostreptococcaceae sp.
+C179	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lacticaseibacillus	Lactobacillus paracasei
+C181	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Fructilactobacillus	Fructilactobacillus sp.
+C182	Bacteria	Bacillota	Clostridia	Lachnospirales	Lachnospiraceae	Epulopiscium	uncultured bacterium
+C191	Bacteria	Bacillota	Bacilli	Erysipelotrichales	Erysipelatoclostridiaceae	Erysipelotrichaceae UCG-003	Erysipelotrichaceae UCG-003 sp.
+C195	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Comamonas	Comamonas kerstersii
+C198	Bacteria	Pseudomonadota	Gammaproteobacteria	Lysobacterales	Lysobacterales sp.	Lysobacterales sp.	Lysobacterales sp.
+C203	Bacteria	Bacillota	Bacilli	Lactobacillales	Enterococcaceae	Enterococcus	Enterococcus casseliflavus
+C204	Bacteria	Bacillota	Bacilli	Staphylococcales	Staphylococcaceae	Staphylococcus	Staphylococcus sp.
+C207	Bacteria	Pseudomonadota	Gammaproteobacteria	Enterobacterales	Morganellaceae	Providencia	Providencia alcalifaciens
+C208	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C209	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Tepidimonas	uncultured Tepidimonas sp.
+C211	Bacteria	Bacteroidota	Bacteroidia	Sphingobacteriales	Sphingobacteriaceae	Sphingobacterium	Sphingobacterium sp.
+C212	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactiplantibacillus	Lactiplantibacillus sp.
+C213	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C215	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Levilactobacillus	Levilactobacillus sp.
+C220	Bacteria	Patescibacteria	Saccharimonadia	Saccharimonadales	Incertae Sedis	Incertae Sedis	uncultured bacterium
+C225	Bacteria	Bacillota	Clostridia	Lachnospirales	Lachnospiraceae	Lachnospiraceae sp.	Lachnospiraceae sp.
+C226	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Levilactobacillus	Lactobacillus brevis
+C230	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Microbacteriaceae	Rhodoluna	uncultured bacterium
+C232	Bacteria	Actinomycetota	Actinobacteria	Micrococcales	Microbacteriaceae	Frigoribacterium	Frigoribacterium sp.
+C234	Bacteria	Bacillota	Bacillota sp.	Bacillota sp.	Bacillota sp.	Bacillota sp.	Bacillota sp.
+C236	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactobacillaceae sp.	Lactobacillaceae sp.
+C238	NA	NA sp.	NA sp.	NA sp.	NA sp.	NA sp.	NA sp.
+C240	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C244	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C248	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacter	Acetobacter persici
+C250	Bacteria	Pseudomonadota	Alphaproteobacteria	Hyphomicrobiales	Beijerinckiaceae	Methylobacterium	Methylobacterium sp. Leaf99
+C255	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C259	Bacteria	Bacillota	Bacilli	Lactobacillales	Lactobacillaceae	Lactiplantibacillus	Lactobacillus plantarum
+C264	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Incertae Sedis	uncultured Acetobacteraceae bacterium
+C271	Bacteria	Pseudomonadota	Gammaproteobacteria	Pseudomonadales	Pseudomonadales sp.	Pseudomonadales sp.	Pseudomonadales sp.
+C275	Bacteria	Pseudomonadota	Gammaproteobacteria	Chromatiales	Chromatiaceae	Lamprocystis	uncultured Chromatiaceae bacterium
+C277	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Bacteroidaceae	Bacteroides	Bacteroides ovatus
+C288	Bacteria	Pseudomonadota	Alphaproteobacteria	Acetobacterales	Acetobacteraceae	Acetobacter	Acetobacter sp.
+C290	Bacteria	Bacteroidota	Bacteroidia	Flavobacteriales	Flavobacteriaceae	Flavobacterium	Flavobacterium sp.
+C291	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown	Unknown
+C298	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C300	Bacteria	Actinomycetota	Actinobacteria	Mycobacteriales	Nocardiaceae	Gordonia	Gordonia sp.
+C302	Bacteria	Patescibacteria	Gracilibacteria	JGI 0000069-P22	Incertae Sedis	Incertae Sedis	Incertae Sedis sp.
+C303	Bacteria	Actinomycetota	Actinobacteria	Kitasatosporales	Streptomycetaceae	Kitasatospora	Kitasatospora sp.
+C305	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Oxalobacteraceae	Incertae Sedis	uncultured bacterium
+C306	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Bacteroidales sp.	Bacteroidales sp.	Bacteroidales sp.
+C332	Bacteria	Bacteroidota	Bacteroidia	Flavobacteriales	Weeksellaceae	Chryseobacterium	Chryseobacterium sp.
+C345	Bacteria	Bacteroidota	Bacteroidia	Bacteroidales	Muribaculaceae	Incertae Sedis	uncultured bacterium
+C346	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C350	Bacteria	Pseudomonadota	Gammaproteobacteria	Burkholderiales	Comamonadaceae	Curvibacter	Curvibacter sp.
+C356	Bacteria	Pseudomonadota	Alphaproteobacteria	Rickettsiales	Anaplasmataceae	Wolbachia	Wolbachia sp.
+C382	Bacteria	Bacillota	Bacilli	Lactobacillales	Streptococcaceae	Streptococcus	Streptococcus sp.
