@@ -159,7 +159,7 @@ If you perform Bioinformatic part move `16s_metadata.csv`, `16s_OTU_table_withou
 
 Next steps will be done on Rstudio.
 
-1.Come back to `Microbiome_analyses` folder.
+1. Come back to `Microbiome_analyses` folder.
 2. Run `1-Control+Phyloseq.Rmd`, this script allow to prepare the phyloseqs object for analyses. 
 3. RUN `2-Alpha_diversity.Rmd`, this script allow to calculate alpha diversity indexes and to statistically compare the diversity accross Locality, HostSpecies and Invasion statut.
 4. Run `3-Ordination.Rmd`, this script allow to represent and compare statically the structure and the composition of the microbiome accross Locality, HostSpecies and Invasion statut.
